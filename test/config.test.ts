@@ -664,6 +664,7 @@ describe('shipped defaults', () => {
     expect(loaded.multiAgent.autoWorktrees).toBe(false);
     expect(loaded.multiAgent.endSleepingWorkerProcesses).toBe(false);
     expect(loaded.multiAgent.archiveWorkerChats).toBe(false);
+    expect(loaded.goal.waitForBackgroundProcesses).toBe(false);
   });
 
   it.each(['win32', 'darwin', 'linux'] as const)(
@@ -684,6 +685,7 @@ describe('shipped defaults', () => {
       expect(config.multiAgent.autoWorktrees).toBe(false);
       expect(config.multiAgent.endSleepingWorkerProcesses).toBe(false);
       expect(config.multiAgent.archiveWorkerChats).toBe(false);
+      expect(config.goal.waitForBackgroundProcesses).toBe(false);
     }
   );
 
@@ -708,7 +710,15 @@ describe('shipped defaults', () => {
     expect(loaded.multiAgent.autoWorktrees).toBe(false);
     expect(loaded.multiAgent.endSleepingWorkerProcesses).toBe(false);
     expect(loaded.multiAgent.archiveWorkerChats).toBe(false);
+    expect(loaded.goal.waitForBackgroundProcesses).toBe(false);
     expect(loaded.readOnly).toBe(true);
+  });
+
+  it('keeps the opt-in background-process Goal wait across save and reload', async () => {
+    const config = defaultConfig();
+    expect(config.goal.waitForBackgroundProcesses).toBe(false);
+    await saveConfig({ ...config, goal: { ...config.goal, waitForBackgroundProcesses: true } });
+    expect((await loadConfig()).goal.waitForBackgroundProcesses).toBe(true);
   });
 
   it('keeps a saved choice to archive retired worker chats (#1460)', async () => {
@@ -874,6 +884,7 @@ describe('the goal loop settings', () => {
       backend: 'chatgpt',
       loopBackend: 'chatgpt',
       includeToolCalls: false,
+      waitForBackgroundProcesses: false,
       impulseMinutes: 0,
       helperModel: 'gpt-6',
       helperReasoning: 'high',
@@ -1021,6 +1032,7 @@ describe('the goal loop settings', () => {
       backend: 'chatgpt',
       loopBackend: 'chatgpt',
       includeToolCalls: false,
+      waitForBackgroundProcesses: false,
       impulseMinutes: 0,
       helperModel: 'gpt-6',
       helperReasoning: 'high',

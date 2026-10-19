@@ -9346,11 +9346,13 @@
             ? t('content_goal_wait_tool_inactivity', 'Waiting for tool inactivity')
             : wait?.reason === 'workers'
               ? t('content_goal_wait_workers', 'Waiting for this chat’s sub-agents')
-              : wait?.reason === 'tools'
-                ? t('content_goal_wait_running_tools', 'Waiting for running tools')
-                : wait?.reason === 'listening'
-                  ? t('content_goal_wait_recovery_activity', 'Waiting for activity after recovery')
-                  : t('content_goal_checking_finished', 'Checking the answer is finished');
+              : wait?.reason === 'processes'
+                ? t('content_goal_wait_processes', 'Waiting for background processes')
+                : wait?.reason === 'tools'
+                  ? t('content_goal_wait_running_tools', 'Waiting for running tools')
+                  : wait?.reason === 'listening'
+                    ? t('content_goal_wait_recovery_activity', 'Waiting for activity after recovery')
+                    : t('content_goal_checking_finished', 'Checking the answer is finished');
       return { stage, detail, body: '', kind: 'goal', ...bar(0) };
     }
     if (goal.phase === 'sending' && draft && draft.reply) {
@@ -11086,7 +11088,7 @@
       // a failure, and not a released claim either: the obligation is filed app-side, and
       // this document keeps the turn and asks again on a fixed short wait until the app
       // says the chat has finished. The bar stays on the settling step meanwhile.
-      if (failure.error === 'chat_still_working') {
+      if (failure.error === 'chat_still_working' || failure.error === 'background_processes_running') {
         setGoalPhase('settling');
         void retryGoalDraft(forTurn, true);
         return;

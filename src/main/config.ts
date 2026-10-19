@@ -154,6 +154,9 @@ const DEFAULT_GOAL: GoalSettings = {
   loopBackend: 'chatgpt',
   impulseMinutes: 0,
   includeToolCalls: false,
+  // Off: a live background process may intentionally be a dev server or watcher. Waiting for it
+  // to exit is therefore an explicit Goal/Loop workflow choice, not a new implicit finish line.
+  waitForBackgroundProcesses: false,
   helperModel: DEFAULT_HELPER_CHAT_MODEL,
   helperReasoning: 'high',
   enabled: false,
@@ -474,6 +477,7 @@ const configSchema = z.object({
     .object({
       impulseMinutes: z.number().int().min(0).max(60).optional().default(0).catch(0),
       includeToolCalls: z.boolean().optional().default(false),
+      waitForBackgroundProcesses: z.boolean().optional().default(false),
       enabled: z.boolean().optional().default(DEFAULT_GOAL.enabled),
       backend: z.enum(['api', 'chatgpt', 'templates']).optional().default('chatgpt'),
       loopBackend: z.enum(['api', 'chatgpt']).optional().default('chatgpt'),
@@ -544,7 +548,7 @@ const configSchema = z.object({
         .catch(DEFAULT_GOAL.loopPrompt)
     })
     .optional()
-    .default({ ...DEFAULT_GOAL, backend: 'chatgpt', loopBackend: 'chatgpt', impulseMinutes: 0, includeToolCalls: false, helperModel: DEFAULT_HELPER_CHAT_MODEL, helperReasoning: 'high' }),
+    .default({ ...DEFAULT_GOAL, backend: 'chatgpt', loopBackend: 'chatgpt', impulseMinutes: 0, includeToolCalls: false, waitForBackgroundProcesses: false, helperModel: DEFAULT_HELPER_CHAT_MODEL, helperReasoning: 'high' }),
   mcp: z
     .object({
       // Repaired rather than rejected, like the Goal prompts above: this is free text a person

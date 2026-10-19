@@ -199,6 +199,7 @@ define the tool/config/wire contract. README and worklogs are secondary and can 
 | Multi-agent | On, 2 simultaneous slot-holding workers **per family**, configured hard max 8; global worker admission cap Off (`0`, configurable through 64). | Legacy absent enabled/allow-unattributed fields remain false; an absent global cap remains Off. Existing choices stay exact. |
 | Automatic worker worktrees | Off. | `multiAgent.autoWorktrees` requires explicit opt-in on fresh and migrated configs. Existing isolated worker leases retain their own workspace when the setting is disabled. |
 | Wait for sub-agents | Off. | When on, a Goal/Loop chat's next automatic step waits for the workers that exact chat started. A chat with no run, or a run with no workers, waits either way. See §16. |
+| Wait for background processes | Off (`goal.waitForBackgroundProcesses`). | When on, a Goal/Loop chat's next automatic step waits while its durable local session owns a still-running `exec_command` child. Completed-but-unread output, anonymous/foreign children and user-authored queued messages do not hold it. Long-lived servers therefore wait until they are actually stopped. See §17. |
 | Unattributed allowance | True on first launch. | Relaxes ambiguity fences only; known blocked/retired/superseded ownership stays enforced. |
 | Auto-select Skills | Off. | When on, ordinary human-authored input with no explicit Skill directive may select at most one managed/imported Skill whose full id/name/display name is literally present after case and hyphen/whitespace normalization. Ambiguous or unnamed input selects none; explicit `/id` or `/prompt id` always wins. |
 | Strict chat allowlist | Off. | When on, every model-facing tool call needs exact attribution. Existing/direct browser chats require explicit Trust from the chat list. A fresh chat opened by the CoS composer gains an explicit Trust entry only after its exact opening row authoritatively binds to the new conversation. Broker-owned workers follow their exact owning prime and a committed Compact & Resume successor follows its durable source lineage. Block still wins, revocation is dynamic, and unattributed calls are refused even when the ordinary unattributed allowance is on. |
@@ -3862,6 +3863,31 @@ already answers `409 chat_still_working` and the extension already retries that 
 
 The app's configurable worker capacity is distinct from the coding agent's delegation policy
 in §19. Do not infer permission to launch development subagents from a product feature toggle.
+
+### Goal/Loop can wait for the same chat's background process
+
+`goal.waitForBackgroundProcesses` is a second, independent opt-in hold for automatic Goal/Loop
+steps. A yielded `exec_command` tool call can be over while the OS child it returned keeps doing
+real work, so `runningToolCalls` is not the authority for this feature. Live process truth remains
+owned by `UnifiedExecProcessManager` and `codex/ownership.ts`; `goal.ts::waitingForGoalBackgroundProcesses`
+only combines that exact durable-session projection with the setting. It waits on `running` only,
+never `exitedUnread`: the next model turn may be what polls completed output, so holding on unread
+output could deadlock an already-finished command. Unknown/anonymous custody fails open, another
+session's child cannot hold this chat, and Compact & Resume needs no special migration because
+process custody follows the durable local session rather than the replaceable conversation id.
+
+The bridge applies that same policy at every automatic send boundary without inventing another
+timer. `goalWaitFor` reports `processes` with no deadline. `/goal/draft` checks before reserving
+provider work and again immediately before `beginGoalDraft`; `/activity` withholds an already
+prepared draft if a process began in the narrow race after that last gate, so the chat is still
+never prompted while the child runs. `owedPickups` removes only non-queued Goal/Loop debt while
+held, so browser pickup attempts/backoff are not spent and authored queue work keeps its own path.
+`session/finish.ts::prepareNotice` releases an automatic finish hold and returns before provider
+drafting, preserving the durable reply obligation exactly like the sub-agent wait. A notice-only
+finish is unchanged. `onBackgroundExecChange` wakes the bridge's existing coalesced recovery sweep
+on lifecycle transitions; the ordinary sweep remains the fallback, and the existing unattended
+process reminder is advisory only, never a timeout. A dev server can therefore hold indefinitely
+when the user deliberately turns this option on, until the process is actually stopped.
 
 ## 17. Goal and Loop: durable intent, replaceable decisions
 

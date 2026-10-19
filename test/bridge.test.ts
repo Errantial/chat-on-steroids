@@ -184,6 +184,8 @@ const { getLog } = await import('../src/main/logger.js');
 const { setShippedExtensionBuildForTest } = await import('../src/main/extension-path.js');
 const { gitExecutable } = await import('../src/main/project-git.js');
 const { allocWorkerWorkspace, resetWorkerWorktreeRegistryForTests, restoreManagedWorktrees } = await import('../src/main/worktrees/index.js');
+const { unifiedExecManager } = await import('../src/main/codex/manager.js');
+const { noteExecOwner, resetExecOwnershipForTests } = await import('../src/main/codex/ownership.js');
 
 const EXTENSION_ORIGIN = 'chrome-extension://abcdefghijklmnopabcdefghijklmnop';
 /** The chat that spawns the swarm in these tests: only a proven conversation can. */
@@ -207,6 +209,27 @@ async function readyContinuation(sessionId: string, brief: string, from = 'c-com
 ${SAMPLE_BRIEF}`);
   expect(stored, 'the brief was not stored, so there is no resume to queue').not.toBeNull();
   return opened.token;
+}
+
+/** One real yielded child, using the same singleton process manager the connector tools use. */
+async function startOwnedBackgroundProcess(owner: string): Promise<number> {
+  const processId = unifiedExecManager.allocateProcessId();
+  const output = await unifiedExecManager.execCommand({
+    command: [process.execPath, '-e', "require('http').createServer((_req,res)=>res.end('ok')).listen(0)"],
+    shellType: process.platform === 'win32' ? 'powershell' : 'bash',
+    hookCommand: 'v0.1.0 background-process Goal wait fixture',
+    processId,
+    yieldTimeMs: 250,
+    maxOutputTokens: undefined,
+    truncationPolicy: { kind: 'tokens', tokens: 1000 },
+    cwd: process.cwd(),
+    displayCwd: process.cwd(),
+    env: process.env,
+    tty: false
+  });
+  expect(output.exitCode).toBeNull();
+  noteExecOwner(processId, owner);
+  return processId;
 }
 
 /**
@@ -14539,6 +14562,78 @@ describe('the goal loop over the bridge', () => {
       expect((await request('GET', '/status')).body.repairs ?? [])
         .toEqual(expect.arrayContaining([expect.objectContaining({ conversationId: chat, reason: 'goal' })]));
     } finally { vi.useRealTimers(); }
+  });
+
+  it('holds Goal debt for this durable session’s live background process without spending pickup recovery', async () => {
+    await pair();
+    const chat = 'cafe00a1-0000-4000-8000-0000000000a1';
+    const previous = getConfig();
+    await saveConfig({ ...previous, goal: { ...previous.goal, enabled: true, mode: 'goal', waitForBackgroundProcesses: true } });
+    const recorded = await request('POST', '/events', { body: { conversationId: chat, events: [
+      { kind: 'user_message', time: Date.now(), text: 'finish after the build', messageId: 'm-process-wait-user' },
+      { kind: 'turn_start', time: Date.now(), turnId: 'g-process-wait' },
+      { kind: 'turn_end', time: Date.now(), turnId: 'g-process-wait', outcome: 'completed' },
+      { kind: 'assistant_message', time: Date.now(), turnId: 'g-process-wait', messageId: 'a-process-wait', text: 'The build is running in the background.',
+        state: 'final', final: true, goalEligible: true, activeNow: true }
+    ] } });
+    const sessionId = recorded.body.sessionId as string;
+    let processId = 0;
+    try {
+      processId = await startOwnedBackgroundProcess(sessionId);
+      expect((await sessionControlsFor(sessionId)).goalWait).toEqual({ reason: 'processes' });
+      expect((await request('GET', `/activity?conversationId=${chat}`)).body.goal.wait).toEqual({ reason: 'processes' });
+      const gated = await request('POST', '/goal/draft', {
+        body: { conversationId: chat, turnId: 'g-process-wait', terminalRequired: true, clientId: 'process-wait-page' }
+      });
+      expect(gated.status).toBe(409);
+      expect(gated.body.error).toBe('background_processes_running');
+
+      vi.useFakeTimers({ toFake: ['Date'] });
+      vi.setSystemTime(Date.now() + 120_001);
+      await sweepStaleSwarm(Date.now());
+      expect(((await request('GET', '/status')).body.repairs ?? []).filter((row: any) => row.conversationId === chat)).toEqual([]);
+      vi.useRealTimers();
+
+      await unifiedExecManager.terminateProcess(processId);
+      await vi.waitFor(() => expect((unifiedExecManager.listProcesses().some(row => row.processId === processId))).toBe(false), { timeout: 5_000 });
+      expect((await sessionControlsFor(sessionId)).goalWait).not.toEqual({ reason: 'processes' });
+
+      vi.useFakeTimers({ toFake: ['Date'] });
+      vi.setSystemTime(Date.now() + 120_001);
+      await sweepStaleSwarm(Date.now());
+      expect((await request('GET', '/status')).body.repairs ?? [])
+        .toEqual(expect.arrayContaining([expect.objectContaining({ conversationId: chat, reason: 'goal' })]));
+    } finally {
+      vi.useRealTimers();
+      if (processId) await unifiedExecManager.terminateProcess(processId).catch(() => false);
+      resetExecOwnershipForTests();
+      await saveConfig(previous);
+    }
+  });
+
+  it('never lets another durable session’s background process hold this Goal', async () => {
+    await pair();
+    const chat = 'cafe00a2-0000-4000-8000-0000000000a2';
+    const previous = getConfig();
+    await saveConfig({ ...previous, goal: { ...previous.goal, enabled: true, mode: 'goal', waitForBackgroundProcesses: true } });
+    const recorded = await request('POST', '/events', { body: { conversationId: chat, events: [
+      { kind: 'user_message', time: Date.now(), text: 'keep going', messageId: 'm-foreign-process-user' },
+      { kind: 'turn_start', time: Date.now(), turnId: 'g-foreign-process' },
+      { kind: 'turn_end', time: Date.now(), turnId: 'g-foreign-process', outcome: 'completed' },
+      { kind: 'assistant_message', time: Date.now(), turnId: 'g-foreign-process', messageId: 'a-foreign-process', text: 'Ready for the next step.',
+        state: 'final', final: true, goalEligible: true, activeNow: true }
+    ] } });
+    const sessionId = recorded.body.sessionId as string;
+    let processId = 0;
+    try {
+      processId = await startOwnedBackgroundProcess('session-belongs-to-another-chat');
+      expect((await sessionControlsFor(sessionId)).goalWait).toEqual({ reason: 'settling' });
+      expect((await request('GET', `/activity?conversationId=${chat}`)).body.goal.wait).toEqual({ reason: 'settling' });
+    } finally {
+      if (processId) await unifiedExecManager.terminateProcess(processId).catch(() => false);
+      resetExecOwnershipForTests();
+      await saveConfig(previous);
+    }
   });
 
   it('advertises the configured Loop helper rather than the inactive API model', async () => {

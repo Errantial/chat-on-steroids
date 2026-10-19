@@ -299,6 +299,7 @@ const settingsPatch = z.object({
   goal: z.object({
     impulseMinutes: z.number().int().min(0).max(60).optional(),
     includeToolCalls: z.boolean().optional(),
+    waitForBackgroundProcesses: z.boolean().optional(),
       backend: z.enum(['api', 'chatgpt', 'templates']).optional(),
       loopBackend: z.enum(['api', 'chatgpt']).optional(),
       helperModel: z.string().trim().min(1).max(80).optional(),
@@ -536,6 +537,11 @@ function mergeSettings(current: Config, base: SettingsSnapshot, wanted: Settings
     goal: {
       impulseMinutes: pick(current.goal.impulseMinutes, base.goal.impulseMinutes, wanted.goal.impulseMinutes),
       includeToolCalls: pick(current.goal.includeToolCalls, base.goal.includeToolCalls, wanted.goal.includeToolCalls),
+      waitForBackgroundProcesses: pick(
+        current.goal.waitForBackgroundProcesses ?? false,
+        base.goal.waitForBackgroundProcesses ?? false,
+        wanted.goal.waitForBackgroundProcesses ?? false
+      ),
       backend: pick(current.goal.backend, base.goal.backend, wanted.goal.backend),
       loopBackend: pick(current.goal.loopBackend, base.goal.loopBackend, wanted.goal.loopBackend),
       helperModel: pick(current.goal.helperModel, base.goal.helperModel, wanted.goal.helperModel),

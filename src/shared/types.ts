@@ -333,6 +333,13 @@ export interface GoalSettings {
   impulseMinutes?: number;
   /** Include tool details in handoff briefs only; Goal/Loop always use authored conversation text. */
   includeToolCalls?: boolean;
+  /**
+   * Hold the next automatic Goal/Loop step while this durable local session still owns a live
+   * background `exec_command` child. Completed-but-unread output does not hold the loop: the
+   * next model turn may be what consumes it. Off by default so long-lived dev servers never
+   * surprise an existing workflow by becoming a new completion condition.
+   */
+  waitForBackgroundProcesses?: boolean;
   helperModel?: string;
   helperReasoning?: ReasoningEffort;
   backend?: GoalBackend;

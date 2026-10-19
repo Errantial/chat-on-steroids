@@ -108,8 +108,10 @@ import {
   withdrawSilenceGoalReplyNow,
   setGoalObjectiveNow,
   setGoalSwitchNow,
-  startGoalDraft
+  startGoalDraft,
+  waitingForGoalBackgroundProcesses
 } from './goal.js';
+import { onBackgroundExecChange } from './codex/ownership.js';
 import { logInfo, logWarn } from './logger.js';
 import {
   closeConversation,
@@ -3375,6 +3377,12 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse): Prom
       const hasKey = await goalKeyPresent(goalModeFor(id));
       let draft = superseded || silenceSuppressed ? null : goalViewFor(id, goalClient);
       if (draft && loopAfterTurnFor(id) && astraSession && await chatStillWorking(id, draft.turnId, astraSession.id)) draft = null;
+      // A process can start after the final pre-provider gate. In that narrow race the provider
+      // request may already exist, but its reply must still not prompt the chat until the owned
+      // child exits. Hiding (not cancelling) the same draft preserves one-decision identity and
+      // lets it reappear unchanged on the first process lifecycle wake.
+      const waitingForProcesses = !!astraSession && waitingForGoalBackgroundProcesses(astraSession.id);
+      if (draft && waitingForProcesses) draft = null;
       let pending = goalPendingReplyFor(id);
       const sourceTurn = pending?.turnId ?? draft?.turnId;
       if (sourceTurn && (!astraSession || !await loopReplyHasAuthority(astraSession.id, id, sourceTurn))) {
@@ -4264,6 +4272,13 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse): Prom
     }
     if (await goalInputPriority(id, sessionId, turnId))
       return goalJson(res, 409, { error: 'user_input_pending', retryable: true }, origin);
+    if (waitingForGoalBackgroundProcesses(sessionId)) {
+      return goalJson(res, 409, {
+        error: 'background_processes_running',
+        retryable: true,
+        message: 'This chat still owns a running background command; Goal/Loop will continue after it exits.'
+      }, origin);
+    }
     if (body['nativeBusy'] === true) {
       const pro = await extendedSilenceWindowFor(id, sessionId);
       const pending = goalPendingReplyFor(id);
@@ -4360,6 +4375,14 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse): Prom
     if (pendingAfterAuthority?.turnId !== turnId) {
       discardPreparedGoalDraft(id, draft.token);
       return goalJson(res, 409, { error: 'goal_reply_not_pending', retryable: false }, origin);
+    }
+    if (waitingForGoalBackgroundProcesses(sessionId)) {
+      discardPreparedGoalDraft(id, draft.token);
+      return goalJson(res, 409, {
+        error: 'background_processes_running',
+        retryable: true,
+        message: 'This chat started a background command while Goal/Loop was preparing; it will continue after that command exits.'
+      }, origin);
     }
     beginGoalDraft(id, draft.token);
     return goalJson(res, 200, { goal: draft, sessionId }, origin);
@@ -5560,6 +5583,7 @@ async function sweepOwnedSwarm(runId: string, now: number): Promise<boolean> {
 /** Lifecycle subscriptions are disposed before restarting the bridge. */
 let dropSwarmEndListener: (() => void) | null = null;
 let dropSwarmChangeListener: (() => void) | null = null;
+let dropBackgroundExecListener: (() => void) | null = null;
 let staleSwarmTimer: NodeJS.Timeout | null = null;
 /** One wake-up on the earliest live silence deadline. See armSilenceSweep(). */
 let silenceTimer: NodeJS.Timeout | null = null;
@@ -5810,6 +5834,15 @@ async function startBridgeOnce(epoch: number, prepared?: PreparedBridge): Promis
   dropSwarmChangeListener?.();
   dropSwarmChangeListener = onSwarmChange(retireInactiveWorkerRecovery);
   retireInactiveWorkerRecovery();
+  dropBackgroundExecListener?.();
+  dropBackgroundExecListener = onBackgroundExecChange(() => {
+    // Process lifecycle already has one authoritative owner. Reuse the bridge's existing
+    // coalesced sweep rather than inventing a process poller: the first change after the last
+    // owned child exits makes any held Goal/Loop debt eligible again immediately.
+    changed();
+    wakeBrowserWork();
+    void runStaleSwarmSweep().catch((err: Error) => logWarn(`background process Goal wake failed: ${err.message}`));
+  });
   dropSpawnRequestListener?.();
   dropSpawnRequestListener = onSpawnRequest((workers) => {
     for (const worker of workers) queueWorkerBootstrap(worker.id, worker.task, worker.model, worker.reasoningEffort, worker.runId);
@@ -5976,6 +6009,8 @@ export async function stopBridge(): Promise<void> {
     dropSwarmEndListener = null;
     dropSwarmChangeListener?.();
     dropSwarmChangeListener = null;
+    dropBackgroundExecListener?.();
+    dropBackgroundExecListener = null;
     dropSpawnRequestListener?.();
     dropSpawnRequestListener = null;
     dropReviveRequestListener?.();
@@ -7291,6 +7326,11 @@ async function goalWaitFor(conversationId: string, sessionId: string, now = Date
   // rather than deciding from a context that is about to change. No deadline: the wait ends
   // when the last worker stops, and a countdown would only be a second, guessed clock.
   if (waitingForSubAgents(conversationId)) return { reason: 'workers' };
+  // A yielded exec_command child is no longer a running tool call, but its work is still live.
+  // This opt-in wait is keyed to the durable local session that owns that child, never to an
+  // anonymous/foreign process or a guessed conversation. No deadline: dev servers can be
+  // intentionally long-lived, and only the actual process owner knows when they stop.
+  if (waitingForGoalBackgroundProcesses(sessionId)) return { reason: 'processes' };
   // The person closed this chat's tab, and browser recovery waits for its page to return: the
   // owed turn is collected then. Until that, nothing is settling, so the window says so.
   if (closed) return { reason: 'closed' };
@@ -9298,6 +9338,10 @@ async function owedPickups(now: number): Promise<Map<string, OwedPickup>> {
   // than deferring inside the scheduler) is what covers the pre-action re-check, the silence
   // re-check and the handout re-check with one rule instead of three.
   for (const id of owed.keys()) if (waitingForSubAgents(id)) owed.delete(id);
+  // Only Goal/Loop debt is held by live background processes. A real queued/user-authored row
+  // still owns its delivery/recovery path and must not be delayed by an unrelated automation
+  // preference in the same durable session.
+  for (const [id, reply] of owed) if (!reply.queued && waitingForGoalBackgroundProcesses(reply.sessionId)) owed.delete(id);
   return owed;
 }
 

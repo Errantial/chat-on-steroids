@@ -63,6 +63,7 @@ import { foldProgress } from '../shared/session.js';
 import { modelFacingText } from '../shared/content-reference.js';
 import { supportsFinishAutomation } from '../shared/finish.js';
 import { BROWSER_PICKUP_MAX_ATTEMPTS, rotationMessage } from '../shared/recovery.js';
+import { backgroundExecObligations } from './codex/ownership.js';
 
 /** A finish-only preference has authority only while the finish tool is available. */
 export async function astraFinishOnly(sessionId: string, conversationId: string): Promise<boolean> {
@@ -71,6 +72,19 @@ export async function astraFinishOnly(sessionId: string, conversationId: string)
   return getConfig().ui.finishTool === true && session?.conversationId === conversationId && selection?.conversationId === conversationId &&
     supportsFinishAutomation(goalSwitchFor(conversationId).mode, selection.model, selection.reasoningEffort) &&
     !loopAfterTurnFor(conversationId);
+}
+
+/**
+ * Whether this Goal/Loop run deliberately waits for live background work it owns.
+ *
+ * Process truth stays in the unified exec manager/ownership registry. This policy layer only
+ * asks that owner-scoped projection whether a live child still exists. Completed-but-unread
+ * output is intentionally excluded: the next model turn may be the thing that polls it, so
+ * waiting on unread output could deadlock a completed command forever.
+ */
+export function waitingForGoalBackgroundProcesses(sessionId: string | null | undefined): boolean {
+  return !!sessionId && getConfig().goal.waitForBackgroundProcesses === true &&
+    backgroundExecObligations(sessionId).running.length > 0;
 }
 /** The saved loopAfterTurn preference now serves both Goal and Loop. Disabling
  * finish makes after-turn effective without overwriting the user's preference. */

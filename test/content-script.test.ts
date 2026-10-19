@@ -21792,6 +21792,9 @@ describe('the goal loop', () => {
     expect(view({ phase: 'settling', wait: { reason: 'workers' } })).toMatchObject({
       stage: 'Waiting for this chat’s sub-agents', detail: '', at: 0
     });
+    expect(view({ phase: 'settling', wait: { reason: 'processes' } })).toMatchObject({
+      stage: 'Waiting for background processes', detail: '', at: 0
+    });
     expect(view({ phase: 'settling', wait: { reason: 'listening', until: live.window.Date.now() + 60_000 } })).toMatchObject({
       stage: 'Waiting for activity after recovery', detail: 'Checking again in 1:00'
     });

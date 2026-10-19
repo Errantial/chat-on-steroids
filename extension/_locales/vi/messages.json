@@ -506,6 +506,9 @@
   "content_goal_wait_workers": {
     "message": "Đang chờ các tác nhân phụ của cuộc trò chuyện này"
   },
+  "content_goal_wait_processes": {
+    "message": "Waiting for background processes"
+  },
   "content_goal_writing_first_message": {
     "message": "$1 đang viết tin nhắn đầu tiên"
   },

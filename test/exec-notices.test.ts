@@ -40,6 +40,19 @@ it('projects only live processes owned by the requested durable session', () => 
     startedAt: 900_010,
     tty: false
   }]);
+  expect(backgroundExecObligations('session-a')).toMatchObject({ running: [10], exitedUnread: [{ processId: 12, exitCode: 0 }] });
+  expect(backgroundExecObligations('session-b')).toMatchObject({ running: [11], exitedUnread: [] });
+});
+it('keeps a session live until its last owned process exits and never treats completed unread output as running', () => {
+  process(20, null, 'session-a');
+  process(21, null, 'session-a');
+  expect(backgroundExecObligations('session-a').running).toEqual([20, 21]);
+  processes.set(20, 0);
+  expect(backgroundExecObligations('session-a')).toMatchObject({ running: [21], exitedUnread: [{ processId: 20, exitCode: 0 }] });
+  processes.set(21, 3);
+  expect(backgroundExecObligations('session-a')).toMatchObject({ running: [], exitedUnread: [
+    { processId: 20, exitCode: 0 }, { processId: 21, exitCode: 3 }
+  ] });
 });
 it('stops only a process owned by the requested durable session', async () => {
   process(10, null, 'session-a');

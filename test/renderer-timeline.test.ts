@@ -4845,6 +4845,23 @@ it('names the wait for this chat’s own sub-agents without inventing a countdow
   expect(row.hidden).toBe(true);
 });
 
+it('names the wait for owned background processes without inventing a countdown', async () => {
+  const { w, append } = await boot([]);
+  const api = (w as any).api;
+  const controls = { automation: 'goal', objective: 'Finish after the build', blocked: '', job: null,
+    goalWait: { reason: 'processes' }, goalDraft: null as unknown };
+  api.getSessionControls = async () => ({ ok: true, data: controls });
+  await append([]);
+  const row = w.document.getElementById('goalLifecycle')!;
+  expect(row.hidden).toBe(false);
+  expect(row.textContent).toContain('Goal · Waiting for background processes');
+  expect(row.querySelector('[role="timer"]')).toBeNull();
+  expect(row.getAttribute('aria-busy')).toBe('true');
+  api.getSessionControls = async () => ({ ok: true, data: { ...controls, goalWait: null } });
+  await append([]);
+  expect(row.hidden).toBe(true);
+});
+
 it('says a Goal waits for its closed chat, without a spinner or a countdown', async () => {
   const { w, append } = await boot([]);
   const api = (w as any).api;

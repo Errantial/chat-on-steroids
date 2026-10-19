@@ -89,6 +89,16 @@ it('limits the existing tool-detail preference to handoff briefs', () => {
   expect(chatSource).toContain("applyChatChecked($<HTMLInputElement>('goalIncludeToolCalls')");
 });
 
+it('offers the opt-in background-process hold with the continuation settings', () => {
+  const toggle = document.getElementById('waitForBackgroundProcesses') as HTMLInputElement;
+  expect(toggle.type).toBe('checkbox');
+  expect(toggle.checked).toBe(false);
+  expect(toggle.closest('label')?.textContent).toContain('Wait for background processes');
+  expect(toggle.closest('label')?.textContent).toContain('Automatic continuation waits while a background command started by this chat is still running');
+  expect(chatSource).toContain("waitForBackgroundProcesses: $<HTMLInputElement>('waitForBackgroundProcesses').checked");
+  expect(chatSource).toContain("$<HTMLInputElement>('waitForBackgroundProcesses')");
+});
+
 it('places context before the model picker and keeps native compaction actions in its dialog', () => {
   const group = document.getElementById('composerSettings')!.parentElement!;
   expect(group.classList.contains('composer-primary-controls')).toBe(true);

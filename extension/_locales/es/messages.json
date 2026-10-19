@@ -512,6 +512,9 @@
   "content_goal_wait_workers": {
     "message": "Esperando a los subagentes de este chat"
   },
+  "content_goal_wait_processes": {
+    "message": "Waiting for background processes"
+  },
   "content_goal_writing_first_message": {
     "message": "$1 está escribiendo el primer mensaje"
   },

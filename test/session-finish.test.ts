@@ -7,7 +7,8 @@ import { TaskRequestError } from '../src/main/task-request.js';
 // Loaded CI runners (Windows especially) can take longer than waitFor's 1 s default to reach
 // the asynchronous follow-up; the conditions themselves are unchanged.
 const WAIT = { timeout: 10_000 };
-const hooks = vi.hoisted(() => ({ caller: { sessionId: '', conversationId: '' }, startedAt: 2000, followup: vi.fn(), enqueue: vi.fn(), hasInput: true, delivered: [] as Array<{ id: string; sessionId: string; text: string; state: string }>, inputListeners: new Set<() => void>() }));
+const hooks = vi.hoisted(() => ({ caller: { sessionId: '', conversationId: '' }, startedAt: 2000, followup: vi.fn(), enqueue: vi.fn(), hasInput: true,
+  backgroundWait: false, delivered: [] as Array<{ id: string; sessionId: string; text: string; state: string }>, inputListeners: new Set<() => void>() }));
 vi.mock('../src/main/session/input.js', () => ({
   hasEligibleToolInput: async () => hooks.hasInput,
   finishNeedsBrowserInput: async () => false,
@@ -15,7 +16,8 @@ vi.mock('../src/main/session/input.js', () => ({
   enqueueInput: hooks.enqueue,
   onInputChange: (listener: () => void) => { hooks.inputListeners.add(listener); return () => hooks.inputListeners.delete(listener); }
 }));
-vi.mock('../src/main/goal.js', async importOriginal => ({ ...await importOriginal<object>(), draftFastFollowup: hooks.followup }));
+vi.mock('../src/main/goal.js', async importOriginal => ({ ...await importOriginal<object>(), draftFastFollowup: hooks.followup,
+  waitingForGoalBackgroundProcesses: () => hooks.backgroundWait }));
 vi.mock('../src/main/mcp/call-context.js', async (importOriginal) => ({
   ...await importOriginal<object>(), currentCall: () => ({ caller: { ...hooks.caller }, startedAt: hooks.startedAt })
 }));
@@ -49,7 +51,7 @@ beforeAll(async () => {
   initConfigPath(directory); initSessionStore(directory);
 });
 beforeEach(async () => {
-  hooks.hasInput = true; hooks.delivered = [];
+  hooks.hasInput = true; hooks.backgroundWait = false; hooks.delivered = [];
   hooks.followup.mockReset().mockResolvedValue('Check the remaining requirement');
   hooks.enqueue.mockReset().mockImplementation(async (input, owner) => ({ ...input, finishOwner: owner, state: 'queued' }));
   notify.mockReset(); setFinishNotifier(notify);
@@ -646,6 +648,23 @@ describe('session finish turn identity', () => {
       expect(hooks.enqueue).toHaveBeenCalledWith(expect.objectContaining({ mode: 'auto' }), expect.anything());
       expect((await getSession(sessionId))?.finishTurn?.released).toBe(false);
     } finally { await saveConfig(previous); resetAgentsForTests(); }
+  });
+  it('releases the hold without asking the provider while this chat owns a live background process', async () => {
+    const previous = getConfig();
+    try {
+      await saveConfig({ ...previous, goal: { ...previous.goal, enabled: true, waitForBackgroundProcesses: true } });
+      hooks.backgroundWait = true;
+      expect(await announceSessionFinish(sessionId, 'Waiting for the build command')).toContain('HELD:');
+      expect(hooks.followup).not.toHaveBeenCalled();
+      expect(hooks.enqueue).not.toHaveBeenCalled();
+      expect((await getSession(sessionId))?.finishTurn?.released).toBe(true);
+      hooks.backgroundWait = false;
+      await appendEvent(sessionId, { source: 'extension', kind: 'turn_start', turnId: 'turn-two', time: 4000 });
+      hooks.caller = { ...hooks.caller };
+      hooks.startedAt = 4000;
+      await announceSessionFinish(sessionId, 'Background command finished');
+      expect(hooks.followup).toHaveBeenCalledTimes(1);
+    } finally { hooks.backgroundWait = false; await saveConfig(previous); }
   });
   it('never holds a notice-only finish on a chat with busy sub-agents', async () => {
     const previous = getConfig();

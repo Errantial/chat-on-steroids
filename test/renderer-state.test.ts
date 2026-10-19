@@ -4607,3 +4607,14 @@ it('offers archiving retired worker chats, off by default, and saves it', async 
   await settle();
   expect(mounted.calls.at(-1)?.multiAgent.archiveWorkerChats).toBe(true);
 });
+
+it('offers the Goal/Loop background-process wait, off by default, and saves it', async () => {
+  const mounted = await mountChat({});
+  const w = mounted.window;
+  const wait = w.document.getElementById('waitForBackgroundProcesses') as HTMLInputElement;
+  expect(wait.checked).toBe(false);
+  wait.checked = true;
+  wait.dispatchEvent(new w.Event('change', { bubbles: true }));
+  await settle();
+  expect(mounted.calls.at(-1)?.goal.waitForBackgroundProcesses).toBe(true);
+});
