@@ -207,6 +207,7 @@ define the tool/config/wire contract. README and worklogs are secondary and can 
 | Recover ordinary/agent tabs | Off. | Goal/Loop can independently justify recovery; history alone cannot. |
 | Automatic Continue | On. | Unfinished-response recovery also serves enabled Goal/Loop. This switch controls ordinary chats; explicit Off survives and malformed config disables it. See §14. |
 | Continue prompt | Built-in phrases (`ui.customContinue` unset). | Settings › Agents & automation. The person's text (trimmed, at most 500 characters, `CUSTOM_CONTINUE_MAX_CHARS`) replaces only the Continue phrase of a silence-recovery Continue (`recoveryMessage({ custom })`, frozen in the outbox row when it is filed); the notice to check existing work and the optional playful aside stay. Empty, too long or damaged reads as unset. Fresh-turn rotation keeps `rotationMessage()`, which `goal.ts` recognises by its text. |
+| Auto-hide failed continuations | Off (`ui.autoHideFailedContinuations`). | When on, only failed app-generated historical continuation notices are hidden from the transcript. Their durable outbox rows, retry eligibility and delivery evidence are unchanged, so turning the preference off reveals them again. Manual **Clear** is separate: it explicitly cancels that exact durable row and keeps its tombstone/evidence. |
 | Goal / Loop | Off, preferred mode Goal. Both decision backends default to ChatGPT, helper `gpt-6` High (`DEFAULT_HELPER_CHAT_MODEL`, which High runs on its thinking lane); a config holding a superseded helper (`SUPERSEDED_HELPER_CHAT_MODELS`: `gpt-5.6-sol`, `gpt-6-thinking`) adopts it on load. | API uses the configured OpenRouter/custom endpoint and stored model. These defaults are not account-availability proof. |
 | Ordinary new-chat model | Automatic: no persisted model or reasoning override. | Optional `ui.defaultChatModel` / `ui.defaultChatReasoning` apply only to a fresh ordinary chat before it has a conversation selection. A recorded conversation or accepted opening input wins. Worker and Goal/Loop/Plan defaults remain separate. |
 | Desktop | Windows on; macOS retains its off default and separate native OS consent; Linux supports extension browser control. | Existing screen/control grants also govern browser tools; unsupported native clipboard remains masked. No new per-tab permission dialog. |
@@ -1451,6 +1452,12 @@ startup failures, ambiguous sends, provider bindings and recorded history never 
 Dismiss delivery notice is an explicit withdrawal too, including after a failed first send;
 it uses the same serialized cancellation and empty-reservation checks. Dismissing a failed
 follow-up or uncertain authorized send preserves its existing chat and delivery evidence.
+Failed automatic continuation notices have a clearer **Clear** action in the historical row;
+that is still this same explicit cancellation, not deletion. `ui.autoHideFailedContinuations`
+is intentionally different: it is renderer presentation only. It hides structurally identified
+failed app-generated continuations without calling `cancelInput`, changing state/retry counters,
+or adding a manual-dismiss marker. Disabling it therefore reveals the original durable row again.
+Ordinary user-authored failures, helper/decision failures and ambiguous send evidence stay visible.
 
 The immutable outbox `opening` role owns first-message setup and initial null-to-provider binding;
 non-null sessionId no longer means the opening was delivered. The exact native document binds

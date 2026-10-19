@@ -6134,7 +6134,9 @@ function paintDetail(followBottom = historyBefore === null): void {
   paintRecoveryStatus();
   const oldest = shown.length ? Math.min(...shown.map(event => event.time)) : 0;
   const newest = shown.length ? Math.max(...shown.map(event => event.time)) : 0;
+  const hideFailedContinuations = config?.ui.autoHideFailedContinuations === true;
   const retiredInputs = pendingComposerInputs.filter(entry => historicalAutomaticInput(entry) &&
+    !(hideFailedContinuations && failedAutomaticContinuation(entry)) &&
     (entry.sessionId ?? entry.deliveredSessionId) === selectedId && !dismissedInputNotices.has(entry.id) &&
     agentFilter === null && entry.createdAt >= oldest && (historyBefore === null || entry.createdAt <= newest))
     .sort((a, b) => a.createdAt - b.createdAt);
@@ -7718,6 +7720,7 @@ const CHAT_INPUTS = [
   'archiveWorkerChats',
   'autoContinue',
   'customContinue',
+  'autoHideFailedContinuations',
   'goalProvider',
   'goalBaseUrl',
   'goalCustomModel',
@@ -7765,6 +7768,8 @@ function queuedWaitReason(entry: InputEntry): 'extension' | 'tool-call' | 'chatg
 
 export function chatApply(state: AppState, previous?: Config): void {
   const { config, bridge } = state;
+  const autoHideChanged = previous !== undefined &&
+    (previous.ui.autoHideFailedContinuations === true) !== (config.ui.autoHideFailedContinuations === true);
   applyRouteSettling(state.status.routeSettlingUntil ?? 0);
   if (bridgePresent !== bridge.present) { bridgePresent = bridge.present; paintPendingInputs(); }
   if (visible && selectedId) void refreshSessionControls();
@@ -7845,6 +7850,7 @@ export function chatApply(state: AppState, previous?: Config): void {
   applyChatValue($<HTMLSelectElement>('goalBackend'), config.goal.backend ?? 'chatgpt', previous?.goal.backend);
   applyChatValue($<HTMLSelectElement>('loopBackend'), config.goal.loopBackend ?? 'chatgpt', previous?.goal.loopBackend);
   applyGoal(state, previous);
+  if (autoHideChanged) paintDetail();
 
   // Extension bridge. Connecting is automatic, so this reports rather than asks.
   const browserRequired = browserExtensionRequired(config);
@@ -7916,6 +7922,15 @@ function historicalAutomaticInput(entry: InputEntry): boolean {
     entry.state === 'cancelled' && !!entry.error;
 }
 
+/**
+ * Auto-hide is deliberately narrower than historical placement. Only failed app-generated
+ * continuation rows are hidden; user cancellations and generic delivery failures remain visible.
+ * This predicate never mutates the outbox, so disabling the preference reveals the same row.
+ */
+function failedAutomaticContinuation(entry: InputEntry): boolean {
+  return historicalAutomaticInput(entry) && entry.state === 'failed' && !!entry.error;
+}
+
 function inputMessageRow(entry: InputEntry, notice: boolean): HTMLElement {
   const row = el('div', 'pending-message');
   row.classList.toggle('is-delivered', !entry.error && ['sent', 'tool'].includes(entry.state));
@@ -7950,7 +7965,12 @@ function inputMessageRow(entry: InputEntry, notice: boolean): HTMLElement {
   receipt.hidden = !entry.error && ['sent', 'tool'].includes(entry.state) && hasLaterModelActivity(entry.deliveredAt ?? entry.offeredAt ?? entry.createdAt);
   row.append(receipt);
   if (notice) {
-    const dismiss = dockAction(() => t("Dismiss delivery notice"), 'i-x', () => {});
+    const failedAutomatic = failedAutomaticContinuation(entry);
+    const dismiss = dockAction(() => failedAutomatic ? t("Clear failed continuation") : t("Dismiss delivery notice"), 'i-x', () => {});
+    if (failedAutomatic) {
+      dismiss.classList.add('delivery-clear');
+      dismiss.append(el('span', 'delivery-clear-label', () => t('Clear')));
+    }
     dismiss.onclick = async () => {
       dismiss.disabled = true;
       const result = await run(api.cancelInput(entry.id));

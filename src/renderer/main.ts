@@ -750,6 +750,7 @@ function save(over: { readOnly?: boolean; theme?: 'light' | 'dark'; appearance?:
       enterSends: $<HTMLSelectElement>('enterSends').value !== 'modifier',
       browserBridgePort: (selectedBridgePort === 'auto' ? 'auto' : Number(selectedBridgePort)) as BrowserBridgePort,
       autoContinue: $<HTMLInputElement>('autoContinue').checked,
+      autoHideFailedContinuations: $<HTMLInputElement>('autoHideFailedContinuations').checked,
       browserOnly: $<HTMLInputElement>('browserOnly').checked,
       autoRefreshPlugins: $<HTMLInputElement>('autoRefreshPlugins').checked,
       autoSelectSkills: $<HTMLInputElement>('autoSelectSkills').checked,
@@ -1697,6 +1698,11 @@ function apply(next: AppState): void {
     ? t('Controlled by CLF_BRIDGE_PORTS. Change the environment override to choose a port here.')
     : t('Auto uses the first available port. A fixed port must be available.'));
   applyChecked($<HTMLInputElement>('autoContinue'), config.ui.autoContinue !== false, previousState?.config.ui.autoContinue);
+  applyChecked(
+    $<HTMLInputElement>('autoHideFailedContinuations'),
+    config.ui.autoHideFailedContinuations === true,
+    previousState?.config.ui.autoHideFailedContinuations
+  );
   applyChecked($<HTMLInputElement>('browserOnly'), config.ui.browserOnly === true, previousState?.config.ui.browserOnly);
   applyChecked($<HTMLInputElement>('autoRefreshPlugins'), config.ui.autoRefreshPlugins === true, previousState?.config.ui.autoRefreshPlugins);
   applyChecked($<HTMLInputElement>('autoSelectSkills'), config.ui.autoSelectSkills === true, previousState?.config.ui.autoSelectSkills);

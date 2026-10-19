@@ -99,6 +99,16 @@ it('offers the opt-in background-process hold with the continuation settings', (
   expect(chatSource).toContain("$<HTMLInputElement>('waitForBackgroundProcesses')");
 });
 
+it('offers reversible failed-continuation cleanup beside continuation settings', () => {
+  const toggle = document.getElementById('autoHideFailedContinuations') as HTMLInputElement;
+  expect(toggle.type).toBe('checkbox');
+  expect(toggle.checked).toBe(false);
+  expect(toggle.closest('label')?.textContent).toContain('Automatically hide failed continuations');
+  expect(toggle.closest('label')?.textContent).toContain('Delivery history is still retained');
+  expect(chatSource).toContain('failedAutomaticContinuation');
+  expect(chatSource).toContain('Clear failed continuation');
+});
+
 it('places context before the model picker and keeps native compaction actions in its dialog', () => {
   const group = document.getElementById('composerSettings')!.parentElement!;
   expect(group.classList.contains('composer-primary-controls')).toBe(true);

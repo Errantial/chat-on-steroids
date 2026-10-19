@@ -3728,6 +3728,9 @@ nav button:hover, nav button.is-sel { background: var(--hover); color: var(--ink
 .pending-message-status .ico { --ico: 13px; --glyph: 15px; }
 .pending-message.is-delivered .pending-message-status { right: 2px; width: 22px; }
 .pending-message .dock-action.delivery-retry { right: 28px; }
+.pending-message .dock-action.delivery-clear { width: 58px; gap: 3px; padding: 4px 7px; }
+.pending-message .dock-action.delivery-clear .delivery-clear-label { font-size: calc(11px * var(--text-scale, 1)); line-height: 1; }
+.pending-message .dock-action.delivery-clear + .dock-action.delivery-retry { right: 64px; }
 .said.is-user.has-input-receipt { position: relative; margin-bottom: 22px; }
 .input-receipt { position: absolute; right: 2px; top: calc(100% + 1px); width: 22px; height: 22px; display: inline-flex; align-items: center; justify-content: center; color: var(--soft); }
 .input-receipt[hidden], .pending-message-status[hidden] { display: none; }

@@ -24,6 +24,8 @@ All browser-side repairs go through one function, `queueBrowserRecovery` in `src
 | Worker wake | A sleeping worker gets a message from its prime. | The browser has 3 min to type the wake (`REVIVAL_DEADLINE_MS`); the woken worker then has 3 more min plus its silence window for a first tool call (`REVIVAL_ACTIVITY_MS`). | One wake attempt per deadline; expiry does not authorize another send. At most 16 wakes per browser reply. | `bridge.ts`, `agents.ts` |
 | Automatic Continue | A silence or error repair is confirmed and the turn has no final answer. | Filed at confirmation; delivered as a queued message. | One per repair. It is held while the chat's own tool calls still run, and up to 3 min (`UNKNOWN_CALL_HOLD_MS`) for calls of no known chat. | `bridge.ts`, `session/input.ts` |
 
+Failed app-generated continuation notices are durable delivery evidence, not recovery authority. The renderer places retired automatic rows at their creation time. **Clear** explicitly cancels the exact row and keeps its tombstone; **Automatically hide failed continuations** (`ui.autoHideFailedContinuations`, Off by default) only hides failed automatic rows from presentation and never changes the outbox, retry state or receipt history. Turning it back Off reveals rows that were only auto-hidden.
+
 ## Holds that delay every path
 
 | Hold | Effect | Length | Owner |

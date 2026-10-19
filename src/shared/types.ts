@@ -145,6 +145,8 @@ export type ChatBrowser = (typeof CHAT_BROWSERS)[number];
 export interface UiPrefs {
   /** Recover an unfinished silent executor turn only while Goal and Loop are both off. */
   autoContinue?: boolean;
+  /** Hide failed app-generated continuation notices without changing durable delivery state. */
+  autoHideFailedContinuations?: boolean;
   /** Preferred account-observed model for a fresh ordinary chat; omitted keeps the catalog fallback. */
   defaultChatModel?: string;
   /** Preferred reasoning for a fresh ordinary chat; omitted keeps the model's normal fallback. */

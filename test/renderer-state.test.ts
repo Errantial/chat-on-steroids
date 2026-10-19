@@ -4618,3 +4618,14 @@ it('offers the Goal/Loop background-process wait, off by default, and saves it',
   await settle();
   expect(mounted.calls.at(-1)?.goal.waitForBackgroundProcesses).toBe(true);
 });
+
+it('offers failed-continuation auto-hide, off by default, and saves it as a UI preference', async () => {
+  const mounted = await mountChat({});
+  const w = mounted.window;
+  const hide = w.document.getElementById('autoHideFailedContinuations') as HTMLInputElement;
+  expect(hide.checked).toBe(false);
+  hide.checked = true;
+  hide.dispatchEvent(new w.Event('change', { bubbles: true }));
+  await settle();
+  expect(mounted.calls.at(-1)?.ui.autoHideFailedContinuations).toBe(true);
+});

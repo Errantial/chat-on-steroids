@@ -721,6 +721,16 @@ describe('shipped defaults', () => {
     expect((await loadConfig()).goal.waitForBackgroundProcesses).toBe(true);
   });
 
+  it('keeps failed-continuation auto-hide off by default and preserves an explicit opt-in', async () => {
+    const config = defaultConfig();
+    expect(config.ui.autoHideFailedContinuations).toBe(false);
+    const { autoHideFailedContinuations: _omitted, ...legacyUi } = config.ui;
+    await fs.writeFile(path.join(dir, 'config.json'), JSON.stringify({ ...config, ui: legacyUi }), 'utf8');
+    expect((await loadConfig()).ui.autoHideFailedContinuations).toBe(false);
+    await saveConfig({ ...config, ui: { ...config.ui, autoHideFailedContinuations: true } });
+    expect((await loadConfig()).ui.autoHideFailedContinuations).toBe(true);
+  });
+
   it('keeps a saved choice to archive retired worker chats (#1460)', async () => {
     const config = defaultConfig();
     await saveConfig({ ...config, multiAgent: { ...config.multiAgent, archiveWorkerChats: true } });
