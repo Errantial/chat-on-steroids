@@ -4197,7 +4197,9 @@ describe('capturing a sent handoff from the recorder', () => {
     expect(saved?.text).toContain('TASK: Synthetic large handoff');
     expect(saved?.text).toContain('… the middle of this brief was longer');
     expect(saved?.text.length).toBeLessThanOrEqual(96_000);
-    expect(saved?.text.endsWith('END_OF_BRIEF')).toBe(true);
+    expect(saved?.text).toContain('END_OF_BRIEF');
+    expect(saved?.text).toContain('DURABLE RECENT WORK — recorded by Chat On Steroids');
+    expect(saved?.text.indexOf('END_OF_BRIEF')).toBeLessThan(saved?.text.indexOf('DURABLE RECENT WORK') ?? -1);
   });
 
   // 2026-10-12: the source turn was stopped and its end arrived with the handoff request, so the

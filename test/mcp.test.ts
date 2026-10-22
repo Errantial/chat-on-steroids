@@ -62,6 +62,7 @@ import {
   beginContinuationSourceSendNow,
   claimContinuationNow,
   commitContinuation,
+  freezeContinuationEvidenceNow,
   openContinuationNow,
   resetContinuationsForTests
 } from '../src/main/session/continuation.js';
@@ -3727,6 +3728,7 @@ describe('exec sessions belong to the chat that opened them', () => {
 
     // The marked prompt is submitted. From here on the chat's calls are refused — whether the
     // turn Stop was clicked on really ended or, as on 2026-09-01, went on calling tools.
+    expect(await freezeContinuationEvidenceNow(opened.token, true)).not.toBeNull();
     expect((await beginContinuationSourceSendNow(opened.token))?.allowed).toBe(true);
     expect(await dispatchContinuationSourceSendNow(opened.token)).toBe(true);
     const duringHandoff = await asChat('wfr_compact_a', 'read', { paths: ['/workspace/src/app.ts'] });
@@ -4529,6 +4531,7 @@ describe('blocked chats', () => {
     await setChatTrusted(chatA, true);
 
     const opened = await openContinuationNow(summary.id, chatA, false);
+    expect(await freezeContinuationEvidenceNow(opened.token, true)).not.toBeNull();
     expect((await beginContinuationSourceSendNow(opened.token))?.allowed).toBe(true);
     expect(await dispatchContinuationSourceSendNow(opened.token)).toBe(true);
     await attachSummary(opened.token, 'STRICT_RESUME_SUMMARY\n'.repeat(40));

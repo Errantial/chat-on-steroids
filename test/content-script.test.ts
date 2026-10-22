@@ -14845,7 +14845,7 @@ describe('the Compact & resume control', () => {
     });
   });
 
-  it('interrupts the live turn, waits for local tools, then prompts this same chat', async () => {
+  it('waits for local tools, then fails closed when the live turn has no native receipt proof', async () => {
     let submitted = '';
     const prompt = 'Write a handoff brief … your reply to this message must be the brief itself';
     // One local call is still running, and finishes on the third time it is asked about.
@@ -14876,27 +14876,23 @@ describe('the Compact & resume control', () => {
     const sends = watchSend(live.document);
     live.document.querySelector('[data-testid="send-button"]')!.addEventListener('click', () => { submitted = composerText(live!.document); });
     const stop = live.document.querySelector('[data-testid="stop-button"]') as HTMLButtonElement;
-    let stopped = false;
-    stop.addEventListener('click', () => {
-      stopped = true;
-      stopGenerating(live!.document);
-    });
+    const stopped = vi.fn(() => stopGenerating(live!.document));
+    stop.addEventListener('click', stopped);
 
     await live.hook.startCompact();
 
-    expect(stopped).toBe(true);
+    expect(stopped).not.toHaveBeenCalled();
     expect(asked).toBeGreaterThanOrEqual(3);
     expect(typedWhileBusy.length).toBeGreaterThan(0);
     expect(typedWhileBusy.filter(Boolean)).toEqual([]);
-    expect(submitted).toContain('the brief itself');
-    expect(sends()).toBe(1);
-    const compacts = startedCompactions(live);
-    expect(compacts).toHaveLength(1);
-    expect(compacts[0]).toMatchObject({ resume: true });
-    // The old chat is still the only place the work exists: nothing has been cancelled and
-    // nothing has navigated. Opening the fresh chat is the app's job, and only once the
-    // generation this send started has handed its brief back.
-    expect(live.sent.some((message) => message.type === 'compact' && message.cancel === true)).toBe(false);
+    expect(submitted).toBe('');
+    expect(sends()).toBe(0);
+    expect(startedCompactions(live)).toEqual([]);
+    expect(live.sent.filter((message) => message.type === 'compact')).toEqual([
+      expect.objectContaining({ ticket: true, automatic: false }),
+      expect.objectContaining({ token: 'tok-nc-1', sourceLost: true,
+        sourceError: expect.stringContaining('has not confirmed receiving') })
+    ]);
   });
 
   it('abandons a compaction instead of retargeting it when the tab navigates while tools settle', async () => {
@@ -15028,7 +15024,7 @@ describe('the Compact & resume control', () => {
     expect(live.document.querySelector('.clf-pill-text')!.textContent).toContain('Could not verify');
   });
 
-  it('closes the exact manual ticket without sending when the turn will not stop', async () => {
+  it('closes the exact manual ticket before Stop when native receipt proof is unavailable', async () => {
     live = await harness(undefined, {
       // Positively prove this is an ordinary chat first; the test is about ChatGPT refusing the
       // later Stop, not about the separate unknown-role authority fence.
@@ -15047,7 +15043,8 @@ describe('the Compact & resume control', () => {
     });
     live.hook.injectControl();
     startGenerating(live.document); // and nothing ever clears it
-    live.document.querySelector('[data-testid="stop-button"]')?.addEventListener('click', (event) => event.preventDefault());
+    const stopped = vi.fn((event: Event) => event.preventDefault());
+    live.document.querySelector('[data-testid="stop-button"]')?.addEventListener('click', stopped);
     const sends = watchSend(live.document);
 
     await live.hook.startCompact();
@@ -15055,11 +15052,13 @@ describe('the Compact & resume control', () => {
     // The failed manual action has no invisible asking pickup left behind.
     expect(composerText(live.document)).toBe('');
     expect(sends()).toBe(0);
+    expect(stopped).not.toHaveBeenCalled();
     expect(live.sent.filter((message) => message.type === 'compact')).toEqual([
       expect.objectContaining({ ticket: true, automatic: false }),
-      expect.objectContaining({ token: 'manual-stop-refused', sourceLost: true, sourceError: expect.stringContaining('would not stop') })
+      expect.objectContaining({ token: 'manual-stop-refused', sourceLost: true,
+        sourceError: expect.stringContaining('has not confirmed receiving') })
     ]);
-    expect(live.document.querySelector('.clf-pill-text')!.textContent).toContain('would not stop');
+    expect(live.document.querySelector('.clf-pill-text')!.textContent).toContain('has not confirmed receiving');
   });
 
   it('never overwrites a draft the user is writing', async () => {

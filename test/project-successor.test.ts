@@ -23,6 +23,7 @@ const {
   continuationByToken,
   beginContinuationSourceSendNow,
   dispatchContinuationSourceSendNow,
+  freezeContinuationEvidenceNow,
   normalizeProjectId,
   openContinuationNow,
   resetContinuationsForTests,
@@ -130,6 +131,7 @@ describe('the Project surviving a restart', () => {
     const session = await createSession({ title: 'Restarted automatic ticket', conversationId: CHAT_A });
     const opened = await openContinuationNow(session.id, CHAT_A, true);
     expect(opened.project).toBeNull();
+    expect(await freezeContinuationEvidenceNow(opened.token, true)).not.toBeNull();
     expect((await beginContinuationSourceSendNow(opened.token, PROJECT))?.allowed).toBe(true);
     expect(continuationByToken(opened.token)?.project).toBe(PROJECT);
     await dispatchContinuationSourceSendNow(opened.token);
