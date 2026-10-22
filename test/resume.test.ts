@@ -18,7 +18,6 @@ import nodePath from 'node:path';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ContinuationSnapshot } from '../src/main/session/continuation.js';
 import { MAX_CHATGPT_MESSAGE_CHARS } from '../src/shared/user-prompt.js';
-import { nativeHandoffPrompt } from '../src/main/session/handoff-prompt.js';
 import { DEFAULT_HANDOFF_PROMPT } from '../src/shared/handoff.js';
 import { resumeBootstrapText } from '../src/main/session/handoff.js';
 
@@ -39,7 +38,7 @@ const { bridgePort, pendingCommands, resetBridgeForTests, resumeJobFor, setBrows
   await import('../src/main/bridge.js');
 const durable = await import('../src/main/durable.js');
 const { flushDurable, initDurableStore, readDurable, writeDurableSoon } = durable;
-const { getSession, initSessionStore, resetSessionStoreForTests, updateSessionPlan } = await import('../src/main/session/store.js');
+const { appendEvent, getSession, initSessionStore, readHandoff, resetSessionStoreForTests, updateSessionPlan } = await import('../src/main/session/store.js');
 const { resetRecorderForTests, sessionForConversation } = await import('../src/main/session/recorder.js');
 const { resetSwarm } = await import('../src/main/agents.js');
 const {
@@ -188,6 +187,49 @@ beforeEach(async () => {
 });
 
 describe('the whole move, when it works', () => {
+  it('carries recorded tool work the source brief omitted into the replacement bootstrap', async () => {
+    await connect();
+    const sessionId = await record();
+    await appendEvent(sessionId, { time: 10, source: 'extension', kind: 'turn_start', turnId: 'source-work' });
+    await appendEvent(sessionId, {
+      time: 20,
+      source: 'mcp',
+      kind: 'tool_call',
+      turnId: 'source-work',
+      call: {
+        callId: '11111111-1111-4111-8111-111111111111',
+        tool: 'exec_command',
+        attribution: 'request_id',
+        requestId: 'req-lossless-handoff',
+        conversationId: CHAT_A,
+        attributionMethod: 'request_id',
+        args: { text: '{"cmd":"npm test"}', truncated: false, chars: 18 },
+        result: { text: '312 passed, 0 failed', truncated: false, chars: 20 },
+        outcome: 'ok',
+        durationMs: 1500,
+        summary: { title: 'Ran npm test', metric: '✓ exit 0', tone: 'good', kind: 'run' }
+      }
+    });
+    const { token: continuation } = await press();
+
+    // Deliberately omit the recorded test run from Chat A's semantic handoff. The code-owned
+    // evidence is the v0.2 guarantee: Chat B must still learn that it already happened.
+    const semantic = BRIEF.replace('`npm run typecheck` is clean; `npx vitest run test/bridge.test.ts` is red.',
+      'Verification details were not included in this semantic brief.');
+    const stored = await capture(continuation, semantic);
+    expect(stored.status).toBe(200);
+    const handoff = await readHandoff(sessionId, stored.body.handoffId as string);
+    expect(handoff?.evidence).toBeTruthy();
+    expect(handoff?.text).toContain('TOOL exec_command — ok');
+    expect(handoff?.text).toContain('Ran npm test');
+
+    const replacement = (await redeem(stored.body.commandId as string, 'page-lossless')).body.command.text as string;
+    expect(replacement).toContain('DURABLE RECENT WORK — recorded by Chat On Steroids');
+    expect(replacement).toContain('TOOL exec_command — ok');
+    expect(replacement).toContain('Ran npm test');
+    expect(replacement).not.toContain('312 passed, 0 failed'); // default tool-detail setting is summary-only
+  });
+
   it('carries the same local session from chat A to chat B and only then retires A', async () => {
     await connect();
     const sessionId = await record();
@@ -375,7 +417,9 @@ describe('one press, one transaction', () => {
     expect(again.body.token).toBe(first.token);
     expect(again.body.started).toBe(false);
     expect(again.body.prompt).toContain(`[[CLF-HANDOFF:${first.token}]]`);
-    expect(first.prompt).toBe(nativeHandoffPrompt(first.token, false));
+    expect(first.prompt).toContain('DURABLE RECENT WORK — recorded by Chat On Steroids');
+    expect(first.prompt).toContain('do the work');
+    expect(first.prompt).toContain('Tool detail mode: summary');
     expect(again.body.prompt).toBe(first.prompt);
     expect(first.prompt).not.toContain('[[COS_CONTEXT:');
 
@@ -532,7 +576,7 @@ describe('a brief longer than the app can type', () => {
     expect(text.length).toBeLessThanOrEqual(MAX_CHATGPT_MESSAGE_CHARS);
   });
 
-  it('carries a large near-budget handoff without a hidden character-budget truncation', async () => {
+  it('budgets a large near-limit handoff around frozen evidence without losing its actionable ends', async () => {
     await connect();
     await record();
     const { token: continuation } = await press();
@@ -545,11 +589,14 @@ describe('a brief longer than the app can type', () => {
     const commandId = stored.body.commandId as string;
     const text = (await redeem(commandId, 'page-long')).body.command.text as string;
 
-    expect(text).toContain(brief);
+    expect(text).toContain(head.trim());
+    expect(text).toContain(tail.trim());
+    expect(text).toContain('DURABLE RECENT WORK — recorded by Chat On Steroids');
+    expect(text).toContain('do the work');
     expect(text).not.toContain('[[COS_CONTEXT:');
-    expect(text).not.toMatch(/middle of this brief.*left out/);
+    expect(text).toMatch(/middle of this brief.*left out/);
     expect(text.length).toBeLessThanOrEqual(MAX_CHATGPT_MESSAGE_CHARS);
-    expect(text.length).toBeGreaterThan(MAX_CHATGPT_MESSAGE_CHARS - 100);
+    expect(text.length).toBeGreaterThan(MAX_CHATGPT_MESSAGE_CHARS - 2_000);
   });
 
   it('delivers the saved plan with the exact continuation marker inside the message limit', async () => {

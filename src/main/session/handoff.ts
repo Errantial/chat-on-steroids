@@ -9,7 +9,7 @@
  */
 
 import { createHash, randomUUID } from 'node:crypto';
-import type { Handoff } from '../../shared/session.js';
+import type { Handoff, HandoffEvidence, HandoffEvidenceRef } from '../../shared/session.js';
 import { continuationMarkerOf, unescapeMarkdown } from '../../shared/session.js';
 import { logInfo } from '../logger.js';
 import { getSession, readSessionPlan, saveHandoff } from './store.js';
@@ -30,6 +30,8 @@ export interface PrepareHandoffInput {
   /** Exact frontend/turn that authored this continuation brief. */
   sourceConversationId?: string | null;
   sourceTurnId?: string | null;
+  /** Exact immutable evidence snapshot frozen before the source prompt was sent. */
+  evidence?: HandoffEvidence | null;
 }
 
 /** A public, non-authority id for provenance. The raw continuation token is never persisted here. */
@@ -64,6 +66,22 @@ function handoffPlanNotice(plan: AgentPlan | null): string {
   return '\n\nSaved task plan at handoff (reported progress, not verification evidence):\n' +
     (plan.explanation ? `${plan.explanation}\n` : '') + steps +
     '\nContinue the unfinished work using this plan and the brief. Report progress with update_plan.';
+}
+
+function evidenceReference(evidence: HandoffEvidence): HandoffEvidenceRef {
+  return {
+    id: evidence.id,
+    hash: evidence.hash,
+    sourceConversationId: evidence.sourceConversationId,
+    sourceTurnId: evidence.sourceTurnId,
+    sourceSeq: evidence.sourceSeq,
+    chars: evidence.text.length
+  };
+}
+
+function handoffEvidenceNotice(evidence: HandoffEvidence | null | undefined): string {
+  if (!evidence?.text.trim()) return '';
+  return `\n\n${evidence.text.trim()}`;
 }
 
 /**
@@ -185,10 +203,20 @@ export async function prepareHandoff(input: PrepareHandoffInput): Promise<Handof
   if (!text) throw new Error('A handoff cannot be empty');
   const summary = await getSession(input.sessionId);
   if (!summary) throw new Error('That session no longer exists');
+  if (input.evidence) {
+    if (input.evidence.sessionId !== input.sessionId) throw new Error('Handoff evidence belongs to another session');
+    if (input.sourceConversationId !== undefined && input.evidence.sourceConversationId !== input.sourceConversationId) {
+      throw new Error('Handoff evidence belongs to another source conversation');
+    }
+    if ((input.sourceTurnId ?? null) !== input.evidence.sourceTurnId) {
+      throw new Error('Handoff evidence belongs to another source turn');
+    }
+  }
   // Freeze the actual saved plan with the brief. A pointer to the removed session
   // tool cannot supply it to the replacement model. Budget this same snapshot once.
   const planNotice = handoffPlanNotice(await readSessionPlan(input.sessionId));
-  const overhead = resumeBootstrapText('', input.continuationToken).length + planNotice.length;
+  const evidenceNotice = handoffEvidenceNotice(input.evidence);
+  const overhead = resumeBootstrapText('', input.continuationToken).length + evidenceNotice.length + planNotice.length;
   text = boundBrief(text, MAX_CHATGPT_MESSAGE_CHARS - overhead);
   // Checked again here, and not only at the bridge route that can word the refusal well,
   // because this is the one function that writes a handoff to disk. A stub that reaches the
@@ -204,7 +232,7 @@ export async function prepareHandoff(input: PrepareHandoffInput): Promise<Handof
     id: newHandoffId(),
     sessionId: input.sessionId,
     createdAt: Date.now(),
-    text: text + planNotice,
+    text: text + evidenceNotice + planNotice,
     sourceEvents: input.sourceEvents ?? summary.events,
     sourceTokens: input.sourceTokens ?? summary.estimatedTokens,
     // The working folder is deliberately not here. It belongs to the durable local session
@@ -216,7 +244,8 @@ export async function prepareHandoff(input: PrepareHandoffInput): Promise<Handof
       sourceGeneration: sourceIndex >= 0 ? sourceIndex + 1 : null,
       sourceTurnId: input.sourceTurnId ?? null,
       continuationId: handoffContinuationId(input.continuationToken)
-    }
+    },
+    ...(input.evidence ? { evidence: evidenceReference(input.evidence) } : {})
   };
   await saveHandoff(handoff);
   logInfo(`handoff ${handoff.id} prepared (${handoff.text.length} characters)`);

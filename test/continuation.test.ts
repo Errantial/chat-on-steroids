@@ -191,6 +191,27 @@ describe('reopening from a saved summary (#1215)', () => {
     expect(await commitContinuation(reopened!.token, CHAT_B)).toBe(true);
   });
 
+  it('reuses a saved handoff with durable evidence without duplicating its appendix', async () => {
+    const summary = await createSession({ title: 'saved evidence', conversationId: CHAT_A });
+    await store.appendEvent(summary.id, {
+      time: 10,
+      source: 'extension',
+      kind: 'user_message',
+      message: { text: 'do the saved work', truncated: false, chars: 17 },
+      messageId: 'saved-question'
+    });
+    await store.appendEvent(summary.id, { time: 20, source: 'extension', kind: 'turn_start', turnId: 'saved-turn' });
+    const opened = await openContinuationNow(summary.id, CHAT_A);
+    await freezeContinuationEvidenceNow(opened.token, false);
+    const first = await attachSummary(opened.token, SAMPLE_BRIEF);
+    expect(first?.text.match(/DURABLE RECENT WORK — recorded by Chat On Steroids/g)).toHaveLength(1);
+    expect(await abortContinuationNow(opened.token, 'replacement never opened')).toBe(true);
+
+    const reopened = await reopenWithHandoffNow(summary.id, first!.id);
+    const claim = await claimContinuationNow(reopened!.token, 'page-b');
+    expect(claim?.summary.match(/DURABLE RECENT WORK — recorded by Chat On Steroids/g)).toHaveLength(1);
+  });
+
   it('refuses while a run is open, for an older summary, and once the session moved on', async () => {
     const { sessionId, token } = await readyContinuation();
     const handoffId = (await getSession(sessionId))!.lastHandoffId!;

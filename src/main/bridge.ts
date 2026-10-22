@@ -4157,8 +4157,10 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse): Prom
     if (already) {
       let prompt: string | null = null;
       if (already.state === 'awaiting-summary' && sendUnattempted(already.sourceSend)) {
+        let evidence;
         try {
-          if (!await freezeContinuationEvidenceNow(already.token, getConfig().goal.includeToolCalls === true)) {
+          evidence = await freezeContinuationEvidenceNow(already.token, getConfig().goal.includeToolCalls === true);
+          if (!evidence) {
             return json(res, 409, { error: 'handoff_evidence_not_available' }, origin);
           }
         } catch (err) {
@@ -4169,7 +4171,8 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse): Prom
           already.token,
           getConfig().goal.includeToolCalls === true,
           getConfig().compaction.handoffPrompt ?? DEFAULT_HANDOFF_PROMPT,
-          getConfig().compaction.handoffLength
+          getConfig().compaction.handoffLength,
+          evidence.text
         );
       }
       return json(
@@ -4200,8 +4203,10 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse): Prom
     rememberToken(sessionId, opened.token);
     changed();
     logInfo(`bridge: browser started Compact & Resume for ${sessionId} (${opened.token.slice(0, 8)})`);
+    let evidence;
     try {
-      if (!await freezeContinuationEvidenceNow(opened.token, getConfig().goal.includeToolCalls === true)) {
+      evidence = await freezeContinuationEvidenceNow(opened.token, getConfig().goal.includeToolCalls === true);
+      if (!evidence) {
         return json(res, 409, { error: 'handoff_evidence_not_available' }, origin);
       }
     } catch (err) {
@@ -4221,7 +4226,8 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse): Prom
           opened.token,
           getConfig().goal.includeToolCalls === true,
           getConfig().compaction.handoffPrompt ?? DEFAULT_HANDOFF_PROMPT,
-          getConfig().compaction.handoffLength
+          getConfig().compaction.handoffLength,
+          evidence.text
         ),
         job: resumeJobFor(sessionId)
       },

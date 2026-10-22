@@ -4310,6 +4310,7 @@ export async function readHandoff(sessionId: string, handoffId: string): Promise
     // provenance.
     if (parsed.version !== undefined || parsed.provenance !== undefined) {
       const provenance = parsed.provenance;
+      const evidence = parsed.evidence;
       if (
         parsed.version !== 1 ||
         parsed.id !== handoffId ||
@@ -4324,7 +4325,17 @@ export async function readHandoff(sessionId: string, handoffId: string): Promise
         (provenance.sourceTurnId !== null &&
           (typeof provenance.sourceTurnId !== 'string' || provenance.sourceTurnId.length > 256)) ||
         (provenance.continuationId !== null &&
-          (typeof provenance.continuationId !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(provenance.continuationId)))
+          (typeof provenance.continuationId !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(provenance.continuationId))) ||
+        (evidence !== undefined && (
+          !evidence ||
+          typeof evidence.id !== 'string' || !/^[a-z0-9-]{8,80}$/.test(evidence.id) ||
+          typeof evidence.hash !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(evidence.hash) ||
+          typeof evidence.sourceConversationId !== 'string' || !evidence.sourceConversationId || evidence.sourceConversationId.length > 256 ||
+          (evidence.sourceTurnId !== null &&
+            (typeof evidence.sourceTurnId !== 'string' || evidence.sourceTurnId.length > 256)) ||
+          !Number.isSafeInteger(evidence.sourceSeq) || evidence.sourceSeq < 0 ||
+          !Number.isSafeInteger(evidence.chars) || evidence.chars < 1 || evidence.chars > 64_000
+        ))
       ) return null;
     }
     return parsed;

@@ -10,7 +10,7 @@
 import { createHash } from 'node:crypto';
 import type { HandoffEvidence, SessionEvent, SessionSummary, StoredText } from '../../shared/session.js';
 import { normalizedToolOutcome, toolCallSummary } from '../../shared/session.js';
-import { injectedUserMessage, positionOf, responseTurnId } from '../../shared/chronology.js';
+import { chronological, injectedUserMessage, positionOf, responseTurnId } from '../../shared/chronology.js';
 import { getSession, readEvents, readRecentEvents } from './store.js';
 
 export const MAX_HANDOFF_EVIDENCE_CHARS = 24_000;
@@ -206,24 +206,17 @@ export async function buildHandoffEvidence(input: BuildHandoffEvidenceInput): Pr
     if (target ? sameTargetTurn(summary, event, target) : positionOf(event) >= boundary) selected.push(event);
   }
   selected.push(...logicalCalls.values());
-  selected.sort((left, right) => {
-    // readRecentEvents already projects turn-local chronology. Re-sort only by its stable
-    // logical position/time tuple after merging canonical tool revisions back into that window.
-    const lp = positionOf(left), rp = positionOf(right);
-    if (left.turnId && right.turnId && responseTurnId(summary.timelineTurns, left.turnId) === responseTurnId(summary.timelineTurns, right.turnId)) {
-      return left.time - right.time || lp - rp || left.seq - right.seq;
-    }
-    return lp - rp || left.seq - right.seq;
-  });
+  const ordered = chronological(selected);
 
   const questionText = question
     ? `SOURCE USER MESSAGE\n${indent(clip(question.authoredText ?? question.message.text, MAX_QUESTION_CHARS))}`
     : null;
-  const rows = selected.map(event => eventRow(event, input.includeToolDetails)).filter((row): row is string => !!row);
-  const sourceSeq = Math.max(0, question?.seq ?? 0, ...selected.map(event => event.seq));
+  const rows = ordered.map(event => eventRow(event, input.includeToolDetails)).filter((row): row is string => !!row);
+  const sourceSeq = Math.max(0, question?.seq ?? 0, ...ordered.map(event => event.seq));
   const header = [
     'DURABLE RECENT WORK — recorded by Chat On Steroids',
     'This is code-recorded execution evidence from the source session. It may contain work the interrupted source answer did not mention.',
+    'Use it to decide what actually ran and changed. User instructions remain the highest authority.',
     `Source conversation: ${input.sourceConversationId}`,
     `Source turn: ${target ?? input.sourceTurnId ?? 'unavailable; bounded recent session tail used'}`,
     `Tool detail mode: ${input.includeToolDetails ? 'detailed' : 'summary'}`

@@ -1214,15 +1214,23 @@ export async function bindContinuationDestinationMessageNow(
 export async function attachSummary(token: string, text: string): Promise<Handoff | null> {
   const brief = text.trim();
   if (!brief) return null;
-  return capture(token, brief, async (entry) =>
-    prepareHandoff({
+  return capture(token, brief, async (entry) => {
+    let evidence: HandoffEvidence | null = null;
+    if (entry.evidence) {
+      evidence = await readHandoffEvidence(entry.sessionId, entry.evidence.id);
+      if (!evidence || !evidenceMatches(entry.evidence, evidence)) {
+        throw new Error('The frozen handoff evidence is missing or does not match its durable continuation reference');
+      }
+    }
+    return prepareHandoff({
       sessionId: entry.sessionId,
       text: brief,
       continuationToken: entry.token,
       sourceConversationId: entry.from,
-      sourceTurnId: entry.sourceTurnId
-    })
-  );
+      sourceTurnId: entry.sourceTurnId,
+      evidence
+    });
+  });
 }
 
 /** The plan notice prepareHandoff appends; a reused brief gets the current one instead. */
