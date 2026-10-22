@@ -10051,10 +10051,13 @@
       'content_compact_chat_changed_before_start',
       'This chat changed before compaction could start.'
     );
-    if (automatic && CLF_DOM.generating()) {
+    if (CLF_DOM.generating()) {
       // A local result can file the ticket before ChatGPT receives that result. Stopping
       // here used to lose completed work from the brief. Require native receipt first;
-      // pendingTools === 0 only proves that execution on this machine has drained.
+      // pendingTools === 0 only proves that execution on this machine has drained. Manual
+      // and automatic compaction need the same correctness fence; only their waiting policy
+      // differs, because a person pressing the button must not inherit the automatic six-
+      // minute recovery budget.
       const awaitingResults = new Map();
       const awaitingRequests = new Set();
       const sourceNodes = new Set();
@@ -10136,7 +10139,8 @@
         // tool) keeps the count short, and a request still without its row keeps waiting.
         return !!fresh && seen.calls > 0 && !seen.answered && awaitingRequests.size === 0 &&
           sent?.settled === true && Number.isInteger(sent.count) && sent.count >= seen.calls;
-      }, AUTO_RECEIPT_SETTLE_MS, AUTO_RECEIPT_QUICK_MS);
+      }, automatic ? AUTO_RECEIPT_SETTLE_MS : MANUAL_RECEIPT_SETTLE_MS,
+        automatic ? AUTO_RECEIPT_QUICK_MS : Infinity);
       if (!current()) return t(
         'content_compact_chat_changed_waiting_results',
         'This chat changed while compaction was waiting for tool results.'
@@ -11338,6 +11342,8 @@
   const AUTO_RECEIPT_SETTLE_MS = 6 * 60_000;
   /** The first stretch of that wait, checked quickly; most receipts land within seconds. */
   const AUTO_RECEIPT_QUICK_MS = 10_000;
+  /** Manual Compact & Resume keeps the interactive wait bounded like the local-tool settle. */
+  const MANUAL_RECEIPT_SETTLE_MS = TOOL_SETTLE_MS;
   /** How many silent answers about pending calls to sit through before refusing. */
   const SETTLE_UNKNOWN_TRIES = 3;
 
