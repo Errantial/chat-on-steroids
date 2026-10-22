@@ -830,6 +830,33 @@ export interface HandoffProvenance {
   continuationId: string | null;
 }
 
+/** Immutable code-owned execution evidence frozen for one Compact & Resume transaction. */
+export interface HandoffEvidence {
+  version: 1;
+  id: string;
+  sessionId: string;
+  createdAt: number;
+  sourceConversationId: string;
+  sourceTurnId: string | null;
+  /** Highest durable session sequence represented by the frozen selection. */
+  sourceSeq: number;
+  detailMode: 'summary' | 'detailed';
+  /** Bounded, already-redacted model-facing evidence text. */
+  text: string;
+  /** SHA-256 base64url over the immutable identity fields plus text. */
+  hash: string;
+}
+
+/** Bounded identity kept in the continuation WAL and copied into the saved handoff. */
+export interface HandoffEvidenceRef {
+  id: string;
+  hash: string;
+  sourceConversationId: string;
+  sourceTurnId: string | null;
+  sourceSeq: number;
+  chars: number;
+}
+
 export interface Handoff {
   /** New writes are v1. Absent means a legacy handoff written before provenance existed. */
   version?: 1;
@@ -845,6 +872,8 @@ export interface Handoff {
   notes: string[];
   /** Immutable source identity for new versioned handoffs. */
   provenance?: HandoffProvenance;
+  /** Immutable execution evidence used to supplement this handoff, when available. */
+  evidence?: HandoffEvidenceRef;
 }
 
 // ---------------------------------------------------------------- agents
