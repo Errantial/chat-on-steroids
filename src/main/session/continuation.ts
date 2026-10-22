@@ -52,7 +52,14 @@
 
 import { randomBytes } from 'node:crypto';
 import { isProModel } from '../../shared/chat-models.js';
-import { continuationMarkerOf, isReasoningEffort, type Handoff, type ReasoningEffort } from '../../shared/session.js';
+import {
+  continuationMarkerOf,
+  isReasoningEffort,
+  type Handoff,
+  type HandoffEvidence,
+  type HandoffEvidenceRef,
+  type ReasoningEffort
+} from '../../shared/session.js';
 import { logInfo, logWarn } from '../logger.js';
 import {
   PRIME_ID,
@@ -67,6 +74,7 @@ import { clearChatWorkspace, moveChatWorkspace, workspaceForChat } from '../work
 import { clearGoalObjective, clearGoalSwitch, goalObjectiveFor, goalSwitchFor, moveGoalObjective, moveGoalSwitch, retireGoalDraftsFor } from '../goal.js';
 import { writeDurableNow, writeDurableSoon } from '../durable.js';
 import { handoffContinuationId, handoffMatchesContinuation, prepareHandoff, resumeBootstrapMatches } from './handoff.js';
+import { buildHandoffEvidence, materializeHandoffEvidence } from './handoff-evidence.js';
 import { ensureHandoffRecorded, recordHandoff, recordNote, rebindConversation } from './recorder.js';
 import { endResumeClaim, noteResumeClaim, noteResumeDispatch, resetResumeGate } from './resume-gate.js';
 import {
@@ -75,8 +83,10 @@ import {
   getSession,
   readEvents,
   readHandoff,
+  readHandoffEvidence,
   refuseAutomaticCompactionNow,
-  rebindSession
+  rebindSession,
+  saveHandoffEvidence
 } from './store.js';
 
 /**
@@ -207,6 +217,46 @@ function requestedModel(value: unknown): RequestedModel | null {
   return { model, reasoningEffort: isReasoningEffort(reasoningEffort) ? reasoningEffort : null };
 }
 
+function evidenceRef(value: unknown): HandoffEvidenceRef | null {
+  if (!value || typeof value !== 'object') return null;
+  const raw = value as Record<string, unknown>;
+  if (
+    typeof raw['id'] !== 'string' || !/^[a-z0-9-]{8,80}$/.test(raw['id']) ||
+    typeof raw['hash'] !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(raw['hash']) ||
+    typeof raw['sourceConversationId'] !== 'string' || !raw['sourceConversationId'] || raw['sourceConversationId'].length > 256 ||
+    (raw['sourceTurnId'] !== null && raw['sourceTurnId'] !== undefined &&
+      (typeof raw['sourceTurnId'] !== 'string' || raw['sourceTurnId'].length > 256)) ||
+    !Number.isSafeInteger(raw['sourceSeq']) || Number(raw['sourceSeq']) < 0 ||
+    !Number.isSafeInteger(raw['chars']) || Number(raw['chars']) < 1 || Number(raw['chars']) > 64_000
+  ) return null;
+  return {
+    id: raw['id'],
+    hash: raw['hash'],
+    sourceConversationId: raw['sourceConversationId'],
+    sourceTurnId: typeof raw['sourceTurnId'] === 'string' ? raw['sourceTurnId'] : null,
+    sourceSeq: Number(raw['sourceSeq']),
+    chars: Number(raw['chars'])
+  };
+}
+
+function evidenceReference(evidence: HandoffEvidence): HandoffEvidenceRef {
+  return {
+    id: evidence.id,
+    hash: evidence.hash,
+    sourceConversationId: evidence.sourceConversationId,
+    sourceTurnId: evidence.sourceTurnId,
+    sourceSeq: evidence.sourceSeq,
+    chars: evidence.text.length
+  };
+}
+
+function evidenceMatches(reference: HandoffEvidenceRef, evidence: HandoffEvidence): boolean {
+  return evidence.id === reference.id && evidence.hash === reference.hash &&
+    evidence.sourceConversationId === reference.sourceConversationId &&
+    evidence.sourceTurnId === reference.sourceTurnId && evidence.sourceSeq === reference.sourceSeq &&
+    evidence.text.length === reference.chars;
+}
+
 interface Continuation {
   /** Frozen source selection intent; only the destination picker proves B's actual selection. */
   requestedModel: RequestedModel | null;
@@ -239,6 +289,8 @@ interface Continuation {
   state: ContinuationState;
   /** The brief, once captured. Handed to whoever opens chat B, and to nothing else. */
   summary: string;
+  /** Immutable code-owned recent-work evidence frozen before the source handoff Send. */
+  evidence: HandoffEvidenceRef | null;
   handoffId: string | null;
   /**
    * The capture in flight, or the settled one. The single-flight lock for {@link attachSummary}.
@@ -297,6 +349,8 @@ interface ContinuationRecord {
   project?: string | null;
   state: ContinuationState;
   summary: string;
+  /** Absent in pre-v0.2 continuation WALs. */
+  evidence?: HandoffEvidenceRef | null;
   handoffId: string | null;
   claimedBy: string | null;
   /** Legacy only: the pre-checkpoint arm flag, read when migrating an older record. */
@@ -329,6 +383,7 @@ function durableRecord(entry: Continuation): ContinuationRecord {
     project: entry.project,
     state: entry.state,
     summary: entry.summary.slice(0, 512 * 1024),
+    evidence: entry.evidence ? { ...entry.evidence } : null,
     handoffId: entry.handoffId,
     claimedBy: entry.claimedBy,
     sourceSend: { ...entry.sourceSend },
@@ -382,6 +437,7 @@ function publishRecord(entry: Continuation, record: ContinuationRecord): void {
   entry.automatic = record.automatic === true;
   entry.state = record.state;
   entry.summary = record.summary;
+  entry.evidence = evidenceRef(record.evidence);
   entry.handoffId = record.handoffId;
   entry.claimedBy = record.claimedBy;
   // A record written before the checkpoints existed has neither; restoreContinuations
@@ -465,6 +521,7 @@ export interface ContinuationView {
   project: string | null;
   sourceSend: ContinuationSendCheckpoint;
   destinationSend: ContinuationDestinationCheckpoint;
+  evidence: HandoffEvidenceRef | null;
 }
 
 const view = (entry: Continuation): ContinuationView => ({
@@ -482,7 +539,8 @@ const view = (entry: Continuation): ContinuationView => ({
   askedAt: entry.askedAt,
   project: entry.project,
   sourceSend: { ...entry.sourceSend },
-  destinationSend: { ...entry.destinationSend }
+  destinationSend: { ...entry.destinationSend },
+  evidence: entry.evidence ? { ...entry.evidence } : null
 });
 
 /** Whether the brief has been asked for: the request is on its way, went out, or was answered. */
@@ -781,6 +839,7 @@ function makeContinuation(sessionId: string, fromConversationId: string, automat
     askedAt: null,
     state: 'awaiting-summary',
     summary: '',
+    evidence: null,
     handoffId: null,
     capture: null,
     handoff: null,
@@ -835,6 +894,44 @@ export async function openContinuationNow(
   }
 }
 
+/**
+ * Freezes the code-owned execution tail before any source handoff prompt may be submitted.
+ *
+ * The evidence file lands first. Only then does the continuation WAL publish its bounded
+ * reference. A crash between those writes leaves an unreferenced immutable artifact; a crash
+ * after the WAL write reuses the same bytes on restart and on every page retry.
+ */
+export async function freezeContinuationEvidenceNow(
+  token: string,
+  includeToolDetails: boolean
+): Promise<HandoffEvidence | null> {
+  return withCheckpointLock(token, async () => {
+    const entry = byToken.get(token);
+    if (!entry || !isOpen(entry) || entry.state !== 'awaiting-summary') return null;
+    if (entry.evidence) {
+      const existing = await readHandoffEvidence(entry.sessionId, entry.evidence.id);
+      if (!existing || !evidenceMatches(entry.evidence, existing)) {
+        throw new Error('The frozen handoff evidence is missing or does not match its durable continuation reference');
+      }
+      return existing;
+    }
+    if (!sendUnattempted(entry.sourceSend)) return null;
+
+    const draft = await buildHandoffEvidence({
+      sessionId: entry.sessionId,
+      sourceConversationId: entry.from,
+      sourceTurnId: entry.sourceTurnId,
+      includeToolDetails
+    });
+    const evidence = materializeHandoffEvidence(draft, `evidence-${randomBytes(10).toString('hex')}`);
+    await saveHandoffEvidence(evidence);
+    const reference = evidenceReference(evidence);
+    await transitionNow(entry, (current) => ({ ...current, evidence: reference }));
+    logInfo(`continuation ${entry.token.slice(0, 8)} froze handoff evidence ${evidence.id} through seq ${evidence.sourceSeq}`);
+    return evidence;
+  });
+}
+
 async function withCheckpointLock<T>(token: string, work: () => Promise<T>): Promise<T> {
   const prior = checkpointLocks.get(token);
   // Reserve each waiter immediately; several callers must not all resume from the
@@ -866,6 +963,7 @@ export async function beginContinuationSourceSendNow(
   return withCheckpointLock(token, async () => {
     const entry = byToken.get(token);
     if (!entry || !isOpen(entry) || entry.state !== 'awaiting-summary') return null;
+    if (!entry.evidence) return null;
     if (entry.sourceSend.state === 'attempted-unresolved') {
       return { allowed: true, checkpoint: { ...entry.sourceSend } };
     }
@@ -1753,6 +1851,7 @@ export async function restoreContinuations(snapshot: ContinuationSnapshot | null
       askedAt: null,
       state: raw.state,
       summary: typeof raw.summary === 'string' ? raw.summary.slice(0, 512 * 1024) : '',
+      evidence: evidenceRef(raw.evidence),
       handoffId: typeof raw.handoffId === 'string' ? raw.handoffId : null,
       capture: null,
       handoff: null,

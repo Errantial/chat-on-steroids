@@ -19,6 +19,7 @@
  *   sessions/<id>/meta.json       the summary, rewritten atomically
  *   sessions/<id>/assets/<id>     screenshots and other binaries
  *   sessions/<id>/handoffs/<id>.json
+ *   sessions/<id>/handoff-evidence/<id>.json immutable pre-Send Compact & Resume evidence
  */
 
 import { modelFacingText } from '../../shared/content-reference.js';
@@ -29,6 +30,7 @@ import path from 'node:path';
 import type {
   AssetRef,
   Handoff,
+  HandoffEvidence,
   ImageStorageClearMode,
   ImageStorageClearResult,
   ImageStorageInfo,
@@ -4241,6 +4243,50 @@ export async function readOverflowText(sessionId: string, assetId: string): Prom
 }
 
 // --------------------------------------------------------------- handoffs
+
+/** Writes one immutable Compact & Resume evidence snapshot before its source prompt may Send. */
+export async function saveHandoffEvidence(evidence: HandoffEvidence): Promise<void> {
+  assertSessionId(evidence.sessionId);
+  if (!/^[a-z0-9-]{8,80}$/.test(evidence.id)) throw new Error('Invalid handoff evidence id');
+  const dir = path.join(sessionDir(evidence.sessionId), 'handoff-evidence');
+  await fs.mkdir(dir, { recursive: true });
+  const target = path.join(dir, `${evidence.id}.json`);
+  const tmp = `${target}.tmp`;
+  // Evidence ids are one-shot. Never overwrite a prior boundary with newer session state.
+  try {
+    await fs.access(target);
+    throw new Error('Handoff evidence already exists');
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
+  }
+  await fs.writeFile(tmp, JSON.stringify(evidence, null, 2), 'utf8');
+  await fs.rename(tmp, target);
+}
+
+/** Reads one immutable evidence snapshot. Structural validation is intentionally strict. */
+export async function readHandoffEvidence(sessionId: string, evidenceId: string): Promise<HandoffEvidence | null> {
+  assertSessionId(sessionId);
+  if (!/^[a-z0-9-]{8,80}$/.test(evidenceId)) return null;
+  try {
+    const raw = await fs.readFile(path.join(sessionDir(sessionId), 'handoff-evidence', `${evidenceId}.json`), 'utf8');
+    const parsed = JSON.parse(raw) as HandoffEvidence;
+    if (
+      parsed?.version !== 1 ||
+      parsed.id !== evidenceId ||
+      parsed.sessionId !== sessionId ||
+      !Number.isFinite(parsed.createdAt) ||
+      typeof parsed.sourceConversationId !== 'string' || !parsed.sourceConversationId || parsed.sourceConversationId.length > 256 ||
+      (parsed.sourceTurnId !== null && (typeof parsed.sourceTurnId !== 'string' || parsed.sourceTurnId.length > 256)) ||
+      !Number.isSafeInteger(parsed.sourceSeq) || parsed.sourceSeq < 0 ||
+      (parsed.detailMode !== 'summary' && parsed.detailMode !== 'detailed') ||
+      typeof parsed.text !== 'string' || parsed.text.length === 0 || parsed.text.length > 64_000 ||
+      typeof parsed.hash !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(parsed.hash)
+    ) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
 
 export async function saveHandoff(handoff: Handoff): Promise<void> {
   assertSessionId(handoff.sessionId);

@@ -68,6 +68,7 @@ const {
   continuationForSession,
   dispatchContinuationDestinationSendNow,
   dispatchContinuationSourceSendNow,
+  freezeContinuationEvidenceNow,
   openContinuationNow,
   releaseContinuationDestinationSendNow,
   reopenWithHandoffNow,
@@ -206,6 +207,72 @@ describe('reopening from a saved summary (#1215)', () => {
 });
 
 describe('capturing the brief', () => {
+  it('freezes one immutable evidence artifact before source Send and reuses it across restart', async () => {
+    const summary = await createSession({ title: 'frozen evidence', conversationId: CHAT_A });
+    await store.appendEvent(summary.id, {
+      time: 10,
+      source: 'extension',
+      kind: 'user_message',
+      message: { text: 'run the proof', truncated: false, chars: 13 },
+      messageId: 'question-evidence'
+    });
+    await store.appendEvent(summary.id, { time: 20, source: 'extension', kind: 'turn_start', turnId: 'turn-evidence' });
+    const opened = await openContinuationNow(summary.id, CHAT_A);
+
+    expect(await beginContinuationSourceSendNow(opened.token)).toBeNull();
+    const evidence = await freezeContinuationEvidenceNow(opened.token, true);
+    expect(evidence).not.toBeNull();
+    expect(continuationByToken(opened.token)?.evidence).toMatchObject({ id: evidence!.id, hash: evidence!.hash });
+    expect((await store.readHandoffEvidence(summary.id, evidence!.id))?.text).toBe(evidence!.text);
+
+    const snapshot = snapshotContinuations();
+    resetContinuationsForTests();
+    await restoreContinuations(snapshot);
+    const restored = await freezeContinuationEvidenceNow(opened.token, false);
+    expect(restored).toMatchObject({ id: evidence!.id, hash: evidence!.hash, text: evidence!.text, detailMode: 'detailed' });
+    expect((await beginContinuationSourceSendNow(opened.token))?.allowed).toBe(true);
+    await dispatchContinuationSourceSendNow(opened.token);
+    expect((await freezeContinuationEvidenceNow(opened.token, false))?.id).toBe(evidence!.id);
+  });
+
+  it('keeps a legacy continuation without evidence readable and freezes it before first Send', async () => {
+    const summary = await createSession({ title: 'legacy evidence', conversationId: CHAT_A });
+    const opened = await openContinuationNow(summary.id, CHAT_A);
+    const snapshot = snapshotContinuations();
+    delete snapshot.entries[0]!.evidence;
+    resetContinuationsForTests();
+    await restoreContinuations(snapshot);
+    expect(continuationByToken(opened.token)?.evidence).toBeNull();
+    expect(await freezeContinuationEvidenceNow(opened.token, false)).not.toBeNull();
+    expect((await beginContinuationSourceSendNow(opened.token))?.allowed).toBe(true);
+  });
+
+  it('does not publish an evidence reference when the continuation WAL write fails', async () => {
+    const summary = await createSession({ title: 'evidence wal failure', conversationId: CHAT_A });
+    const opened = await openContinuationNow(summary.id, CHAT_A);
+    const durable = await import('../src/main/durable.js');
+    const write = vi.spyOn(durable, 'writeDurableNow').mockRejectedValueOnce(new Error('evidence WAL disk full'));
+    await expect(freezeContinuationEvidenceNow(opened.token, true)).rejects.toThrow('evidence WAL disk full');
+    expect(continuationByToken(opened.token)?.evidence).toBeNull();
+    expect(await beginContinuationSourceSendNow(opened.token)).toBeNull();
+    write.mockRestore();
+    const retried = await freezeContinuationEvidenceNow(opened.token, true);
+    expect(retried).not.toBeNull();
+    expect((await beginContinuationSourceSendNow(opened.token))?.allowed).toBe(true);
+  });
+
+  it('fails closed when a frozen evidence artifact is missing instead of regenerating newer bytes', async () => {
+    const summary = await createSession({ title: 'missing frozen evidence', conversationId: CHAT_A });
+    const opened = await openContinuationNow(summary.id, CHAT_A);
+    const evidence = await freezeContinuationEvidenceNow(opened.token, false);
+    const snapshot = snapshotContinuations();
+    await fs.rm(path.join(sessionsRoot(), summary.id, 'handoff-evidence', `${evidence!.id}.json`), { force: true });
+    resetContinuationsForTests();
+    await restoreContinuations(snapshot);
+    await expect(freezeContinuationEvidenceNow(opened.token, true)).rejects.toThrow(/missing|match/i);
+    expect(continuationByToken(opened.token)?.evidence?.id).toBe(evidence!.id);
+  });
+
   it('freezes exact source model intent across selection changes and durable restore', async () => {
     const summary = await createSession({ title: 'model transfer', conversationId: CHAT_A });
     await store.observeSessionModel(summary.id, CHAT_A, 'gpt-5.6-sol', 10, 'high');
@@ -324,12 +391,14 @@ describe('capturing the brief', () => {
 
     const claimed = await createSession({ title: 'claimed source', conversationId: CHAT_B });
     const claimedContinuation = await openContinuationNow(claimed.id, CHAT_B, true);
+    await freezeContinuationEvidenceNow(claimedContinuation.token, false);
     expect((await beginContinuationSourceSendNow(claimedContinuation.token))?.allowed).toBe(true);
     expect(await abortContinuationSourceBeforeSendNow(claimedContinuation.token, 'handoff_never_sent')).toBe(true);
     expect(continuationByToken(claimedContinuation.token)?.state).toBe('aborted');
 
     const armed = await createSession({ title: 'armed source', conversationId: CHAT_C });
     const armedContinuation = await openContinuationNow(armed.id, CHAT_C, true);
+    await freezeContinuationEvidenceNow(armedContinuation.token, false);
     expect((await beginContinuationSourceSendNow(armedContinuation.token))?.allowed).toBe(true);
     expect(await dispatchContinuationSourceSendNow(armedContinuation.token)).toBe(true);
     expect(await abortContinuationSourceBeforeSendNow(armedContinuation.token, 'handoff_never_sent')).toBe(false);
@@ -1281,6 +1350,7 @@ describe('restart lifetime recovery', () => {
 
     // Asked for: from here chat A is refused every tool until the handover lands, so this is
     // where the clock starts. A handover the model never finishes must not fence A for good.
+    await freezeContinuationEvidenceNow(opened.token, false);
     expect((await beginContinuationSourceSendNow(opened.token))?.allowed).toBe(true);
     expect(await dispatchContinuationSourceSendNow(opened.token)).toBe(true);
     expect(compactingConversation(CHAT_A)?.token).toBe(opened.token);
@@ -2049,6 +2119,7 @@ describe('an exact handoff response owns its waiting deadline', () => {
     try {
       const session = await createSession({ title: 'long handoff', conversationId: CHAT_A });
       const opened = await openContinuationNow(session.id, CHAT_A);
+      await freezeContinuationEvidenceNow(opened.token, false);
       await beginContinuationSourceSendNow(opened.token);
       await dispatchContinuationSourceSendNow(opened.token);
       await bindContinuationSourceMessageNow(opened.token, 'exact-user-message');
@@ -2080,6 +2151,7 @@ describe('an exact handoff response owns its waiting deadline', () => {
       const session = await createSession({ title: 'writing deadline identity', conversationId: CHAT_A });
       if (model !== null) await store.observeSessionModel(session.id, CHAT_A, model, 10, effort ?? undefined);
       const opened = await openContinuationNow(session.id, CHAT_A);
+      await freezeContinuationEvidenceNow(opened.token, false);
       await beginContinuationSourceSendNow(opened.token);
       await dispatchContinuationSourceSendNow(opened.token);
       expect(await bindContinuationSourceMessageNow(opened.token, 'exact-user-message')).toBe(true);

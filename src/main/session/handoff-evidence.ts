@@ -31,6 +31,15 @@ export interface BuildHandoffEvidenceInput {
 
 export type HandoffEvidenceDraft = Omit<HandoffEvidence, 'id' | 'createdAt'>;
 
+/** Adds immutable storage identity without changing the content hash. */
+export function materializeHandoffEvidence(
+  draft: HandoffEvidenceDraft,
+  id: string,
+  createdAt = Date.now()
+): HandoffEvidence {
+  return { ...draft, id, createdAt };
+}
+
 function clip(value: string, max: number): string {
   const text = value.replace(/\r\n?/g, '\n').trim();
   if (text.length <= max) return text;
@@ -231,4 +240,3 @@ export async function buildHandoffEvidence(input: BuildHandoffEvidenceInput): Pr
   };
   return { ...draftWithoutHash, hash: hashEvidence(draftWithoutHash) };
 }
-

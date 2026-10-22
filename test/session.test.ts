@@ -54,6 +54,7 @@ import {
   turnHasMcpCall,
   conversationHasMcpCallSince,
   readHandoff,
+  readHandoffEvidence,
   rebindSession,
   renameSession,
   clearSessionName,
@@ -61,6 +62,7 @@ import {
   resetSessionStoreForTests,
   rewriteUnattributedToolCalls,
   saveHandoff,
+  saveHandoffEvidence,
   sessionsRoot,
   unsetSessionRootForTests,
   upsertMessageEvent,
@@ -2183,6 +2185,27 @@ describe('session store', () => {
 // ---------------------------------------------------------------- handoffs
 
 describe('handoff storage', () => {
+  it('stores Compact & Resume evidence immutably beside the session handoff history', async () => {
+    const session = await createSession({ title: 'handoff evidence storage' });
+    const evidence = {
+      version: 1 as const,
+      id: 'evidence-0123456789abcdef',
+      sessionId: session.id,
+      createdAt: 1234,
+      sourceConversationId: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+      sourceTurnId: 'turn-a',
+      sourceSeq: 42,
+      detailMode: 'summary' as const,
+      text: 'DURABLE RECENT WORK — one command completed successfully.',
+      hash: 'A'.repeat(43)
+    };
+    await saveHandoffEvidence(evidence);
+    expect(await readHandoffEvidence(session.id, evidence.id)).toEqual(evidence);
+    await expect(saveHandoffEvidence({ ...evidence, text: 'newer bytes must not replace the freeze' }))
+      .rejects.toThrow(/already exists/i);
+    expect((await readHandoffEvidence(session.id, evidence.id))?.text).toBe(evidence.text);
+  });
+
   const handoff = (sessionId: string, id: string, createdAt: number) => ({
     id,
     sessionId,

@@ -228,6 +228,7 @@ import {
   supersededSourceConversations,
   dispatchContinuationDestinationSendNow,
   dispatchContinuationSourceSendNow,
+  freezeContinuationEvidenceNow,
   releaseUndeliveredSourceDispatchNow,
   normalizeProjectId,
   openContinuationNow,
@@ -3960,6 +3961,14 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse): Prom
     if (body['sourceAttempt'] === true) {
       const entry = continuationByToken(checkpointToken);
       if (!entry || entry.from !== id) return json(res, 409, { error: 'no_such_continuation' }, origin);
+      try {
+        if (!await freezeContinuationEvidenceNow(checkpointToken, getConfig().goal.includeToolCalls === true)) {
+          return json(res, 409, { error: 'handoff_evidence_not_available' }, origin);
+        }
+      } catch (err) {
+        logWarn(`bridge: could not freeze handoff evidence for ${entry.sessionId} — ${err instanceof Error ? err.message : String(err)}`);
+        return json(res, 503, { error: 'handoff_evidence_not_durable', retryable: true }, origin);
+      }
       const result = await beginContinuationSourceSendNow(checkpointToken,
         Object.hasOwn(body, 'project') ? normalizeProjectId(body['project']) : undefined);
       return result
@@ -4146,15 +4155,23 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse): Prom
     }
     const already = continuationForSession(sessionId);
     if (already) {
-      const prompt =
-        already.state === 'awaiting-summary' && sendUnattempted(already.sourceSend)
-          ? nativeHandoffPrompt(
-              already.token,
-              getConfig().goal.includeToolCalls === true,
-              getConfig().compaction.handoffPrompt ?? DEFAULT_HANDOFF_PROMPT,
-              getConfig().compaction.handoffLength
-            )
-          : null;
+      let prompt: string | null = null;
+      if (already.state === 'awaiting-summary' && sendUnattempted(already.sourceSend)) {
+        try {
+          if (!await freezeContinuationEvidenceNow(already.token, getConfig().goal.includeToolCalls === true)) {
+            return json(res, 409, { error: 'handoff_evidence_not_available' }, origin);
+          }
+        } catch (err) {
+          logWarn(`bridge: could not freeze handoff evidence for ${sessionId} — ${err instanceof Error ? err.message : String(err)}`);
+          return json(res, 503, { error: 'handoff_evidence_not_durable', retryable: true, sessionId }, origin);
+        }
+        prompt = nativeHandoffPrompt(
+          already.token,
+          getConfig().goal.includeToolCalls === true,
+          getConfig().compaction.handoffPrompt ?? DEFAULT_HANDOFF_PROMPT,
+          getConfig().compaction.handoffLength
+        );
+      }
       return json(
         res,
         prompt ? 202 : 200,
@@ -4183,6 +4200,14 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse): Prom
     rememberToken(sessionId, opened.token);
     changed();
     logInfo(`bridge: browser started Compact & Resume for ${sessionId} (${opened.token.slice(0, 8)})`);
+    try {
+      if (!await freezeContinuationEvidenceNow(opened.token, getConfig().goal.includeToolCalls === true)) {
+        return json(res, 409, { error: 'handoff_evidence_not_available' }, origin);
+      }
+    } catch (err) {
+      logWarn(`bridge: could not freeze handoff evidence for ${sessionId} — ${err instanceof Error ? err.message : String(err)}`);
+      return json(res, 503, { error: 'handoff_evidence_not_durable', retryable: true, sessionId }, origin);
+    }
     return json(
       res,
       202,
