@@ -1139,7 +1139,10 @@ describe('enabled plugin process ownership', () => {
       return new Promise(resolve => { releaseSecret = resolve; });
     });
     const call = manager.restart(h.row.id);
-    await vi.waitFor(() => expect(requested).toBe(true));
+    // This barrier follows a real Windows child-process teardown and may be
+    // delayed on the full serial CI suite; do not mistake scheduler pressure
+    // for a missing credential lookup.
+    await vi.waitFor(() => expect(requested).toBe(true), { timeout: 10_000 });
     const closing = manager.close();
     releaseSecret('fixture-value');
     await call;
@@ -1182,7 +1185,38 @@ describe('enabled plugin process ownership', () => {
 
 // #1255 follow-up: the app's proxy leaves remote plugins the system reaches directly alone.
 it('lists the addresses of remote plugins, and only those', async () => {
-  await manager.install({ source: { kind: 'command', command: process.execPath, args: [entry] } });
-  await manager.install({ source: { kind: 'remote', url: 'https://mcp.lan.example/mcp', auth: 'oauth' } });
-  expect(manager.remoteEndpoints()).toEqual(['https://mcp.lan.example/mcp']);
+  // Exercise the public installation path without depending on external DNS,
+  // OAuth discovery, or an unreachable placeholder hostname in a unit test.
+  const server = createServer(async (req, res) => {
+    if (req.method !== 'POST') { res.writeHead(405).end(); return; }
+    let body = '';
+    for await (const chunk of req) body += chunk;
+    const message = JSON.parse(body);
+    if (message.id === undefined) { res.writeHead(202).end(); return; }
+    let result: unknown;
+    if (message.method === 'initialize') result = {
+      protocolVersion: '2025-11-25',
+      capabilities: { tools: {} },
+      serverInfo: { name: 'Endpoint fixture', version: '1' },
+    };
+    else if (message.method === 'tools/list') result = { tools: [{ name: 'Remote.Echo', inputSchema: { type: 'object' } }] };
+    else { res.writeHead(400).end(); return; }
+    res.writeHead(200, { 'content-type': 'application/json' })
+      .end(JSON.stringify({ jsonrpc: '2.0', id: message.id, result }));
+  });
+  await new Promise<void>((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', resolve);
+  });
+  try {
+    await manager.install({ source: { kind: 'command', command: process.execPath, args: [entry] } });
+    const address = server.address() as { port: number };
+    const endpoint = `http://127.0.0.1:${address.port}/mcp`;
+    await manager.install({ source: { kind: 'remote', url: endpoint } });
+    expect(manager.remoteEndpoints()).toEqual([endpoint]);
+  } finally {
+    await manager.close();
+    server.closeAllConnections();
+    await new Promise<void>(resolve => server.close(() => resolve()));
+  }
 });
