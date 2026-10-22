@@ -814,6 +814,7 @@ describe('a check or download that goes wrong on a bad connection', () => {
     expect(online.asked).toEqual([]);
     await vi.advanceTimersByTimeAsync(2_000);
     await vi.waitFor(() => expect(updateStatus().checkedAt).not.toBeNull());
+    await checkForUpdates();
     expect(updateStatus().error).toBeNull();
     const calls = online.asked.length;
     await vi.advanceTimersByTimeAsync(60 * 60_000);
@@ -839,4 +840,3 @@ describe('a check or download that goes wrong on a bad connection', () => {
     expect(updateStatus().error).toContain('no data for 60 seconds');
   });
 });
-
