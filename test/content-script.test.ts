@@ -18400,6 +18400,40 @@ describe('the context meter and automatic compaction', () => {
     tool: 'exec', order: 0, answered
   });
 
+  it.each([false, true])('waits for native receipt before stopping a manual source even when local tools are finished (pre-row: %s)', async preRow => {
+    live = await harness(undefined, {
+      activity: () => withContext(205_000, settings({ auto: false }), { pendingTools: 0 }),
+      compact: () => ({ ok: true, data: {
+        token: 'manual-receipt-token', prompt: 'Write the brief.',
+        job: {
+          sessionId: 's1', stage: 'handoff-pending', busy: true, automatic: false,
+          handoffId: null, error: null, sourceSend: { state: 'not-attempted', messageId: null }
+        }
+      } })
+    });
+    startGenerating(live.document);
+    const section = assistantTurn(live.document, 'manual-receipt-source', []);
+    let received = false;
+    compactionFiber(section, () => preRow && !received ? [] : [compactionCall(received)], () => [],
+      () => preRow ? [{ requestId: compactionCall(false).requestId, messageId: 'pre-row-request' }] : []);
+    const stop = live.document.querySelector('[data-testid="stop-button"]')!;
+    const stopped = vi.fn(() => stopGenerating(live!.document));
+    stop.addEventListener('click', stopped);
+    const sends = watchSend(live.document);
+
+    const compacting = live.hook.startCompact(false);
+    await settle();
+    expect(stopped).not.toHaveBeenCalled();
+    expect(startedCompactions(live)).toEqual([]);
+    expect(sends()).toBe(0);
+
+    received = true;
+    await compacting;
+    expect(stopped).toHaveBeenCalledTimes(1);
+    expect(startedCompactions(live)).toHaveLength(1);
+    expect(sends()).toBe(1);
+  });
+
   it.each([false, true])('waits for native receipt before stopping an automatic source even when local tools are finished (pre-row: %s)', async preRow => {
     live = await harness(undefined, {
       activity: () => withContext(205_000, settings({ auto: true }), { pendingTools: 0 }),
