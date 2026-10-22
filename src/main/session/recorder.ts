@@ -1209,6 +1209,52 @@ export interface ToolCallInput {
 const requestRecordings = new Map<string, Promise<void>>();
 const sessionRecordings = new Map<string, Promise<void>>();
 const pendingRecordings = new Set<Promise<unknown>>();
+type RecordingFailure = {
+  conversationId: string | null;
+  turnId: string | null;
+  requestId: string | null;
+  tool: string;
+  startedAt: number;
+  failedAt: number;
+};
+const recentRecordingFailures: RecordingFailure[] = [];
+
+function rememberRecordingFailure(input: ToolCallInput, target: Target | null): void {
+  recentRecordingFailures.push({
+    conversationId: target?.conversationId ?? input.conversationId ?? null,
+    turnId: target?.turnId ?? null,
+    requestId: input.requestId ?? null,
+    tool: input.tool,
+    startedAt: input.startedAt,
+    failedAt: Date.now()
+  });
+  if (recentRecordingFailures.length > 64) recentRecordingFailures.splice(0, recentRecordingFailures.length - 64);
+}
+
+/**
+ * Whether a known recorder failure can make one source handoff tail incomplete.
+ * Unknown ownership is conservative; a proven other conversation/turn never blocks this source.
+ */
+export function handoffRecordingFailure(
+  conversationId: string,
+  turnId: string | null,
+  openedAt: number
+): RecordingFailure | null {
+  const floor = openedAt - REQUEST_ID_GRACE_MS;
+  for (let index = recentRecordingFailures.length - 1; index >= 0; index--) {
+    const failure = recentRecordingFailures[index]!;
+    if (failure.failedAt < floor) break;
+    if (failure.conversationId !== null && failure.conversationId !== conversationId) continue;
+    if (turnId && failure.turnId && failure.turnId !== turnId) continue;
+    return { ...failure };
+  }
+  return null;
+}
+
+/** Test-only seam for the bridge's fail-closed handoff coverage. */
+export function noteHandoffRecordingFailureForTests(failure: RecordingFailure): void {
+  recentRecordingFailures.push({ ...failure });
+}
 
 function serializeRecording<T>(queues: Map<string, Promise<void>>, key: string, run: () => Promise<T>): Promise<T> {
   const work = (queues.get(key) ?? Promise.resolve()).then(run);
@@ -1242,6 +1288,7 @@ function serializeRecording<T>(queues: Map<string, Promise<void>>, key: string, 
 export function recordToolCall(input: ToolCallInput): Promise<ToolCallRecord | null> {
   if (!recordingEnabled()) return Promise.resolve(null);
   let attributing: Promise<Target>;
+  let resolvedTarget: Target | null = null;
   if (input.conversationId) {
     const live = conversations.get(input.conversationId);
     const correlation = input.requestId ? requestCorrelation(input.requestId) : null;
@@ -1283,6 +1330,7 @@ export function recordToolCall(input: ToolCallInput): Promise<ToolCallRecord | n
   }
   const file = async (): Promise<ToolCallRecord | null> => {
     const target = await attributing;
+    resolvedTarget = target;
     const owner = target.sessionId ?? (target.conversationId ? conversations.get(target.conversationId)?.sessionId : null);
     // Cold/historical owners use the existing targetSession authority, never a guessed chat.
     const sessionId = owner ?? await targetSession(target);
@@ -1290,7 +1338,11 @@ export function recordToolCall(input: ToolCallInput): Promise<ToolCallRecord | n
     return serializeRecording(sessionRecordings, sessionId, () => fileToolCall(input, target));
   };
   const filed = (input.requestId ? serializeRecording(requestRecordings, input.requestId, file) : file())
-    .catch((err: Error) => { logWarn(`session recorder could not admit a tool call: ${err.message}`); return null; });
+    .catch((err: Error) => {
+      rememberRecordingFailure(input, resolvedTarget);
+      logWarn(`session recorder could not admit a tool call: ${err.message}`);
+      return null;
+    });
   pendingRecordings.add(filed);
   void filed.then(() => pendingRecordings.delete(filed));
   return filed;
@@ -2832,6 +2884,7 @@ export function resetRecorderForTests(): void {
   requestRecordings.clear();
   sessionRecordings.clear();
   pendingRecordings.clear();
+  recentRecordingFailures.length = 0;
   lastActiveSessionId = null;
   if (attributionRepairTimer) {
     clearTimeout(attributionRepairTimer);

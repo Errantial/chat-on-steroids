@@ -11450,6 +11450,10 @@
       'content_error_turn_still_generating',
       'Wait for this ChatGPT turn to finish first.'
     );
+    if (data.error === 'handoff_evidence_not_durable') return t(
+      'content_compact_evidence_incomplete',
+      'Recent tool history is still settling or could not be recorded. Nothing was compacted.'
+    );
     if (data.error) return String(data.error).slice(0, 160);
     if (reply.error === 'app_not_found') return t(
       'content_app_not_running',

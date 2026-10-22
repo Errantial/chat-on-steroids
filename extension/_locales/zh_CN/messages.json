@@ -263,6 +263,9 @@
   "content_compact_tools_stop_unverified": {
     "message": "无法确认本地工具已停止。未执行压缩。"
   },
+  "content_compact_evidence_incomplete": {
+    "message": "?????????????????????????"
+  },
   "content_compact_unavailable": {
     "message": "“压缩并恢复”不可用"
   },

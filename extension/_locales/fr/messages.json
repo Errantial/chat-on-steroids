@@ -263,6 +263,9 @@
   "content_compact_tools_stop_unverified": {
     "message": "Impossible de confirmer l’arrêt des outils locaux. Aucun compactage n’a eu lieu."
   },
+  "content_compact_evidence_incomplete": {
+    "message": "L?historique r?cent des outils est encore en cours de traitement ou n?a pas pu ?tre enregistr?. Rien n?a ?t? compact?."
+  },
   "content_compact_unavailable": {
     "message": "« Compacter et reprendre » indisponible"
   },

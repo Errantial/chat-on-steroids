@@ -263,6 +263,9 @@
   "content_compact_tools_stop_unverified": {
     "message": "No se pudo verificar que las herramientas locales se hubieran detenido. No se compactó nada."
   },
+  "content_compact_evidence_incomplete": {
+    "message": "El historial reciente de herramientas a?n se est? procesando o no se pudo registrar. No se compact? nada."
+  },
   "content_compact_unavailable": {
     "message": "Compactar y reanudar no disponible"
   },

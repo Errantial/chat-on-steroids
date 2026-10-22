@@ -263,6 +263,9 @@
   "content_compact_tools_stop_unverified": {
     "message": "Could not verify that local tools had stopped. Nothing was compacted."
   },
+  "content_compact_evidence_incomplete": {
+    "message": "Recent tool history is still settling or could not be recorded. Nothing was compacted."
+  },
   "content_compact_unavailable": {
     "message": "Compact & resume unavailable"
   },

@@ -123,6 +123,8 @@ import {
   notifyChanged,
   recordNote,
   recordProgress,
+  handoffRecordingFailure,
+  REQUEST_ID_GRACE_MS,
   ResumeDestinationPendingError,
   restoreRecordedConversation,
   setCallAttributionListener,
@@ -2261,6 +2263,31 @@ async function fileCompactionTicket(sessionId: string, id: string, automatic = f
   changed();
   return { opened, started: !existing };
 }
+
+/**
+ * Evidence freeze waits only for recorder work that might still belong to this chat.
+ * Proven work in another conversation is excluded by settlingToolCalls(); unknown ownership
+ * is conservative until its request-id grace expires. This is intentionally not flushRecorder:
+ * an unrelated chat must never become a global Compact & Resume barrier.
+ */
+async function settleHandoffRecorder(entry: ContinuationView): Promise<void> {
+  const deadline = Date.now() + REQUEST_ID_GRACE_MS + 1_000;
+  while (settlingToolCalls(entry.from) > 0) {
+    if (Date.now() >= deadline) {
+      throw new Error('recent tool history is still waiting for conversation attribution');
+    }
+    await new Promise(resolve => setTimeout(resolve, 100));
+  }
+  const failure = handoffRecordingFailure(entry.from, entry.sourceTurnId, entry.openedAt);
+  if (failure) {
+    throw new Error(`recent ${failure.tool} result could not be stored in the session history`);
+  }
+}
+
+async function freezeCompactionEvidence(entry: ContinuationView) {
+  await settleHandoffRecorder(entry);
+  return freezeContinuationEvidenceNow(entry.token, getConfig().goal.includeToolCalls === true);
+}
 export async function compactSession(sessionId: string): Promise<SessionControlsView> {
   const { opened } = await fileCompactionTicket(sessionId, await controlledConversation(sessionId));
   if (opened.state === 'awaiting-summary') {
@@ -3962,7 +3989,7 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse): Prom
       const entry = continuationByToken(checkpointToken);
       if (!entry || entry.from !== id) return json(res, 409, { error: 'no_such_continuation' }, origin);
       try {
-        if (!await freezeContinuationEvidenceNow(checkpointToken, getConfig().goal.includeToolCalls === true)) {
+        if (!await freezeCompactionEvidence(entry)) {
           return json(res, 409, { error: 'handoff_evidence_not_available' }, origin);
         }
       } catch (err) {
@@ -4159,7 +4186,7 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse): Prom
       if (already.state === 'awaiting-summary' && sendUnattempted(already.sourceSend)) {
         let evidence;
         try {
-          evidence = await freezeContinuationEvidenceNow(already.token, getConfig().goal.includeToolCalls === true);
+          evidence = await freezeCompactionEvidence(already);
           if (!evidence) {
             return json(res, 409, { error: 'handoff_evidence_not_available' }, origin);
           }
@@ -4205,7 +4232,7 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse): Prom
     logInfo(`bridge: browser started Compact & Resume for ${sessionId} (${opened.token.slice(0, 8)})`);
     let evidence;
     try {
-      evidence = await freezeContinuationEvidenceNow(opened.token, getConfig().goal.includeToolCalls === true);
+      evidence = await freezeCompactionEvidence(opened);
       if (!evidence) {
         return json(res, 409, { error: 'handoff_evidence_not_available' }, origin);
       }

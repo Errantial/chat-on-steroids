@@ -263,6 +263,9 @@
   "content_compact_tools_stop_unverified": {
     "message": "無法確認本機工具已停止。未執行壓縮。"
   },
+  "content_compact_evidence_incomplete": {
+    "message": "?????????????????????????"
+  },
   "content_compact_unavailable": {
     "message": "「壓縮並繼續」無法使用"
   },

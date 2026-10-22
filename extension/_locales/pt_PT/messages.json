@@ -263,6 +263,9 @@
   "content_compact_tools_stop_unverified": {
     "message": "Não foi possível verificar se as ferramentas locais pararam. Nada foi compactado."
   },
+  "content_compact_evidence_incomplete": {
+    "message": "O hist?rico recente das ferramentas ainda est? a ser processado ou n?o p?de ser registado. Nada foi compactado."
+  },
   "content_compact_unavailable": {
     "message": "Compactar e retomar indisponível"
   },

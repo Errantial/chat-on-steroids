@@ -120,7 +120,7 @@ const { completeProcessCall, createSession, deleteSession, findSessionByConversa
 );
 const sessionStoreModule = await import('../src/main/session/store.js');
 const { noteServedRequest, resetConnectorIdentityForTests } = await import('../src/main/connector-identity.js');
-const { closeConversation, liveConversations, noteChatOrigin, recordChatObservations, recordProgress, recordToolCall, REQUEST_ID_GRACE_MS, resetRecorderForTests } = await import('../src/main/session/recorder.js');
+const { closeConversation, liveConversations, noteChatOrigin, noteHandoffRecordingFailureForTests, recordChatObservations, recordProgress, recordToolCall, REQUEST_ID_GRACE_MS, resetRecorderForTests } = await import('../src/main/session/recorder.js');
 const { requestCorrelation, resetCorrelationRegistryForTests, restoreRequestCorrelations } = await import('../src/main/session/correlation.js');
 const { readSessionList } = await import('../src/main/session/read-model.js');
 const { resetBlockedChatsForTests, setChatBlocked } = await import('../src/main/session/blocked-chats.js');
@@ -3967,6 +3967,82 @@ describe('automatic compaction', () => {
       expect(continuationByToken(token)).toMatchObject({ state: 'awaiting-summary', sourceSend: { state: 'dispatched-unresolved' } });
     } finally {
       vi.useRealTimers();
+    }
+  });
+});
+
+describe('freezing complete handoff evidence', () => {
+  it('fails closed when a known recent source-tool result could not be recorded', async () => {
+    await pair();
+    const conversationId = 'a1a1a1a1-0000-4000-8000-00000000ae01';
+    await request('POST', '/events', {
+      body: { conversationId, events: [{ kind: 'user_message', time: Date.now(), text: 'preserve the last tool result', messageId: 'm-evidence-failure' }] }
+    });
+    const filed = await request('POST', '/compact', { body: { conversationId, ticket: true } });
+    const token = filed.body.token as string;
+    noteHandoffRecordingFailureForTests({
+      conversationId,
+      turnId: null,
+      requestId: 'req-evidence-failure',
+      tool: 'exec_command',
+      startedAt: Date.now() - 10,
+      failedAt: Date.now()
+    });
+
+    const attempted = await request('POST', '/compact', { body: { conversationId } });
+    expect(attempted.status).toBe(503);
+    expect(attempted.body.error).toBe('handoff_evidence_not_durable');
+    expect(continuationByToken(token)).toMatchObject({
+      evidence: null,
+      sourceSend: { state: 'not-attempted' }
+    });
+  });
+
+  it('waits for an unattributed recorder tail before freezing evidence', async () => {
+    await pair();
+    const conversationId = 'a1a1a1a1-0000-4000-8000-00000000ae02';
+    await request('POST', '/events', {
+      body: { conversationId, events: [{ kind: 'user_message', time: Date.now(), text: 'wait for attribution', messageId: 'm-evidence-settle' }] }
+    });
+    await request('POST', '/compact', { body: { conversationId, ticket: true } });
+    const calls = await import('../src/main/mcp/call-context.js');
+    let release!: () => void;
+    const pending = new Promise<void>(resolve => { release = resolve; });
+    calls.holdWhileSettling({
+      startedAt: Date.now(), transportKey: null, agent: null, outcome: null, evidence: calls.emptyEvidence(),
+      caller: { conversationId: null, requestId: 'req-unknown-evidence', transportKey: null }
+    }, pending);
+
+    const opening = request('POST', '/compact', { body: { conversationId } });
+    await new Promise(resolve => setTimeout(resolve, 150));
+    expect(continuationForSession((await findSessionByConversation(conversationId, { requireUnique: true }))!.id)?.evidence).toBeNull();
+    release();
+    const opened = await opening;
+    expect(opened.status).toBe(202);
+    expect(opened.body.prompt).toContain('DURABLE RECENT WORK — recorded by Chat On Steroids');
+  });
+
+  it('refuses rather than freezing while unattributed recorder work remains unresolved', async () => {
+    await pair();
+    const conversationId = 'a1a1a1a1-0000-4000-8000-00000000ae03';
+    await request('POST', '/events', {
+      body: { conversationId, events: [{ kind: 'user_message', time: Date.now(), text: 'do not guess the tail', messageId: 'm-evidence-timeout' }] }
+    });
+    const filed = await request('POST', '/compact', { body: { conversationId, ticket: true } });
+    const calls = await import('../src/main/mcp/call-context.js');
+    let release!: () => void;
+    const pending = new Promise<void>(resolve => { release = resolve; });
+    calls.holdWhileSettling({
+      startedAt: Date.now(), transportKey: null, agent: null, outcome: null, evidence: calls.emptyEvidence(),
+      caller: { conversationId: null, requestId: 'req-stuck-evidence', transportKey: null }
+    }, pending);
+    try {
+      const attempted = await request('POST', '/compact', { body: { conversationId } });
+      expect(attempted.status).toBe(503);
+      expect(attempted.body.error).toBe('handoff_evidence_not_durable');
+      expect(continuationByToken(filed.body.token as string)?.evidence).toBeNull();
+    } finally {
+      release();
     }
   });
 });

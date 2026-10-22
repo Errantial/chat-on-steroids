@@ -263,6 +263,9 @@
   "content_compact_tools_stop_unverified": {
     "message": "Es ließ sich nicht prüfen, ob die lokalen Tools gestoppt haben. Es wurde nichts komprimiert."
   },
+  "content_compact_evidence_incomplete": {
+    "message": "Der aktuelle Tool-Verlauf wird noch verarbeitet oder konnte nicht aufgezeichnet werden. Es wurde nichts komprimiert."
+  },
   "content_compact_unavailable": {
     "message": "Komprimieren & fortsetzen nicht verfügbar"
   },

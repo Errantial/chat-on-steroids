@@ -263,6 +263,9 @@
   "content_compact_tools_stop_unverified": {
     "message": "Yerel araçların durduğu doğrulanamadı. Hiçbir şey sıkıştırılmadı."
   },
+  "content_compact_evidence_incomplete": {
+    "message": "Son ara? ge?mi?i h?l? i?leniyor veya kaydedilemedi. Hi?bir ?ey s?k??t?r?lmad?."
+  },
   "content_compact_unavailable": {
     "message": "Sıkıştır ve sürdür kullanılamıyor"
   },

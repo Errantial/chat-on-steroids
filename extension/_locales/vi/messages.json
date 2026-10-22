@@ -263,6 +263,9 @@
   "content_compact_tools_stop_unverified": {
     "message": "Không thể xác minh các công cụ cục bộ đã dừng. Không có gì được thu gọn."
   },
+  "content_compact_evidence_incomplete": {
+    "message": "L?ch s? c?ng c? g?n ??y v?n ?ang ???c x? l? ho?c kh?ng th? ghi l?i. Kh?ng c? n?i dung n?o ???c thu g?n."
+  },
   "content_compact_unavailable": {
     "message": "Compact & Resume không khả dụng"
   },

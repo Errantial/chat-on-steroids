@@ -505,6 +505,7 @@ export function setContinuationRecoveryHooks(hooks: ContinuationRecoveryHooks): 
 
 export interface ContinuationView {
   requestedModel: RequestedModel | null;
+  sourceTurnId: string | null;
   touchedAt: number;
   token: string;
   sessionId: string;
@@ -526,6 +527,7 @@ export interface ContinuationView {
 
 const view = (entry: Continuation): ContinuationView => ({
   requestedModel: requestedModel(entry.requestedModel),
+  sourceTurnId: entry.sourceTurnId,
   touchedAt: entry.touchedAt,
   token: entry.token,
   sessionId: entry.sessionId,
